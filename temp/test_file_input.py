@@ -7,6 +7,7 @@ import numpy as np
 import queue
 import threading
 import glob
+from collections import deque
 
 # Ensure src is in path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -25,8 +26,7 @@ class FileAudioStream:
         self._running = False
         self._ptr = 0
         self._thread = None
-        self._background_rms = 50.0
-    
+        
     def start(self):
         self._running = True
         self._thread = threading.Thread(target=self._run)
@@ -40,17 +40,16 @@ class FileAudioStream:
     def _run(self):
         while self._running:
             if self._ptr + self.chunk_size > len(self.audio):
-                print("\n[End of file loop, restarting in 2 seconds...]")
-                time.sleep(2.0)
-                self._ptr = 0
-                continue
+                # End of audio
+                self._running = False
+                break
                 
             chunk = self.audio[self._ptr : self._ptr + self.chunk_size]
             self._output_queue.put(chunk)
             self._ptr += self.chunk_size
             
-            # Simulate real-time delay
-            time.sleep(self.chunk_size / config.SAMPLE_RATE)
+            # Simulate real-time delay (fast forward 2x for testing speed)
+            time.sleep((self.chunk_size / config.SAMPLE_RATE) * 0.5)
             
     def get_chunk(self, timeout=0.1):
         try:
@@ -65,6 +64,13 @@ class FileAudioStream:
     def background_rms(self):
         return 50.0
 
+def get_expected_label(filename):
+    fname = os.path.basename(filename)
+    for cn, en in config.COMMAND_MAPPING.items():
+        if cn in fname:
+            return en
+    return "UNKNOWN"
+
 def test_file_simulation():
     print("=" * 70)
     print("Bio-Voice Commander - File Simulation Test")
@@ -76,19 +82,29 @@ def test_file_simulation():
     print("Loading templates from:", base_dir)
     matcher.load_templates_from_dir(base_dir)
 
-    # 2. Prepare Input Audio (Concatenate all templates with silence)
+    # 2. Prepare Input Audio
     print("\nPreparing input audio from templates...")
     input_audio = np.array([], dtype=np.int16)
-    silence = np.zeros(int(config.SAMPLE_RATE * 1.0), dtype=np.int16) # 1 sec silence
+    # 1 second silence
+    silence = np.zeros(int(config.SAMPLE_RATE * 1.0), dtype=np.int16)
     
-    # Find files
-    template_files = glob.glob(os.path.join(base_dir, "cmd_templates", "*.*"))
+    # Sort files to ensure deterministic order
+    template_files = sorted(glob.glob(os.path.join(base_dir, "cmd_templates", "*.*" )))
+    
+    expected_sequence = []
+    
+    # Add silence at start
+    input_audio = np.concatenate((input_audio, silence))
+
     for f in template_files:
-        print(f"  Adding {os.path.basename(f)}")
+        label = get_expected_label(f)
+        print(f"  Adding {os.path.basename(f)} -> Expecting: {label}")
         try:
             data = load_audio_file(f)
-            # Add silence before and after
-            input_audio = np.concatenate((input_audio, silence, data, silence))
+            # Add to sequence
+            expected_sequence.append({'label': label, 'start_sample': len(input_audio)})
+            
+            input_audio = np.concatenate((input_audio, data, silence))
         except Exception as e:
             print(f"    Error loading {f}: {e}")
 
@@ -112,21 +128,21 @@ def test_file_simulation():
     stats = {
         'total_detections': 0,
         'successful_matches': 0,
-        'processing_times': [],
-        'vad_times': []
+        'processing_times': []
     }
     vad_start_time = None
-
+    
+    # Pointer to track which expected command we are near
+    current_sample_idx = 0
+    
     try:
-        start_wall_time = time.time()
         while True:
-            # Stop after one full loop roughly
-            # if time.time() - start_wall_time > (len(input_audio)/config.SAMPLE_RATE) + 5:
-            #     break
-
-            chunk = audio_stream.get_chunk(timeout=0.1)
+            chunk = audio_stream.get_chunk(timeout=0.5)
             if len(chunk) == 0:
-                continue
+                print("End of stream.")
+                break
+                
+            current_sample_idx += len(chunk)
 
             state, segment = vad.process_chunk(chunk)
 
@@ -134,32 +150,70 @@ def test_file_simulation():
                 vad_start_time = time.time()
 
             if state == VADState.PROCESSING and segment is not None:
-                vad_time = (time.time() - vad_start_time) * 1000 if vad_start_time else 0
-                stats['vad_times'].append(vad_time)
                 stats['total_detections'] += 1
                 
-                print(f"\n[Detection #{stats['total_detections']}]")
+                # Determine what we *should* have heard based on timing
+                # This is approximate because VAD trims silence
+                # Just popping the next expected command for simplicity
+                expected = "???"
+                if len(expected_sequence) > 0:
+                    expected = expected_sequence.pop(0)['label']
+
+                print(f"\n[Detection #{stats['total_detections']}] Expected: {expected}")
                 
                 # Recognize
                 t0 = time.time()
-                result = matcher.recognize(segment, mode='all')
+                raw_results = matcher.recognize(segment, mode='all') # Get all individual results
                 proc_time = (time.time() - t0) * 1000
                 stats['processing_times'].append(proc_time)
                 
+                # Compute ensemble decision manually
+                best_command = 'NONE'
+                best_confidence = 0.0
+                best_method = None
+                
+                for method, res in raw_results['all_results'].items():
+                    cmd = res['command']
+                    dist = res['distance']
+                    threshold = matcher.matchers[method].threshold # Get matcher to access its threshold
+                    
+                    if cmd != 'NONE':
+                        conf = 1 - min(dist / threshold, 1)
+                        if conf > best_confidence:
+                            best_confidence = conf
+                            best_command = cmd
+                            best_method = method
+
                 # Print Result
                 has_match = False
-                for method, res in result['all_results'].items():
+                matches = []
+                for method, res in raw_results['all_results'].items():
                     cmd = res['command']
+                    dist = res['distance']
+                    threshold = matcher.matchers[method].threshold
+                    
+                    mark = "✗"
                     if cmd != 'NONE':
-                        print(f"  {method:12s}: {cmd:8s} (dist={res['distance']:.1f}) ✓")
-                        has_match = True
-                    else:
-                        print(f"  {method:12s}: NONE     (dist={res['distance']:.1f}) ✗")
+                        mark = "✓"
+                        if cmd == expected:
+                            mark = "✓✓ (Correct)"
+                        else:
+                            mark = "✓? (Wrong Cmd)"
+                        matches.append(method)
+                    
+                    print(f"  {method:12s}: {cmd:8s} (dist={dist:6.2f}, th={threshold:5.1f}) {mark}")
                 
-                if has_match:
-                    stats['successful_matches'] += 1
-                
-                print("-" * 50)
+                # Show Ensemble Decision
+                print(f"  {'>> DECISION':12s}: {best_command:8s} (conf={best_confidence*100:.0f}%, by {best_method})")
+
+                if best_command != 'NONE' and best_command == expected:
+                    print(f"\n  Overall: ✓✓ CORRECT MATCH for {expected}")
+                elif best_command != 'NONE' and best_command != expected:
+                    print(f"\n  Overall: ✓? WRONG COMMAND! Expected {expected}, got {best_command}")
+                else:
+                    print(f"\n  Overall: ✗ NO MATCH!")
+
+                print("-" * 60)
                 
                 vad.reset()
                 vad_start_time = None
@@ -168,6 +222,8 @@ def test_file_simulation():
         print("\nStopping...")
     finally:
         audio_stream.stop()
+    
+    print(f"\nCompleted. Total Detections: {stats['total_detections']}")
 
 if __name__ == '__main__':
     test_file_simulation()

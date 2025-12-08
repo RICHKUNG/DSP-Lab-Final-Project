@@ -19,7 +19,7 @@ def test_features():
     print("=" * 60)
 
     # Find audio files
-    base_dir = os.path.dirname(os.path.abspath(__file__))
+    base_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cmd_templates')
     audio_files = []
 
     for ext in ['*.m4a', '*.wav', '*.mp3']:
@@ -85,7 +85,7 @@ def test_recognition():
 
     from src.recognizers import MultiMethodMatcher
 
-    base_dir = os.path.dirname(os.path.abspath(__file__))
+    base_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cmd_templates')
 
     # Create matcher and load templates
     matcher = MultiMethodMatcher()

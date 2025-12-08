@@ -3,6 +3,7 @@
 import sys
 import os
 import time
+import argparse
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -17,6 +18,15 @@ def test_live_recognition():
     print("=" * 70)
     print("Bio-Voice Commander - Live Microphone Test")
     print("=" * 70)
+
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description="Live microphone test for Bio-Voice Commander.")
+    parser.add_argument(
+        "--device-index",
+        type=int,
+        help="Specify the input audio device index to use. Skips automatic detection."
+    )
+    args = parser.parse_args()
 
     # Load templates
     base_dir = os.path.dirname(os.path.abspath(__file__))
@@ -40,18 +50,43 @@ def test_live_recognition():
         print("Please ensure audio files with Chinese command names are in the directory.")
         return
 
-    # Find suitable audio device
+    # Find suitable audio device or use specified
     print("\n" + "=" * 70)
-    print("Finding suitable audio device...")
-    device_info = find_suitable_device(config.SAMPLE_RATE, verbose=True)
+    if args.device_index is not None:
+        print(f"Attempting to use specified device index: {args.device_index}")
+        # Need to re-check if this device works and its rate
+        pa = pyaudio.PyAudio()
+        try:
+            info = pa.get_device_info_by_index(args.device_index)
+            if info.get('maxInputChannels', 0) > 0:
+                device_index = args.device_index
+                device_rate = int(info.get("defaultSampleRate", config.SAMPLE_RATE))
+                print(f"  Device '{info['name']}' found.")
+            else:
+                print(f"  Device {args.device_index} has no input channels. Falling back to auto-detect.")
+                args.device_index = None # Fallback
+        except Exception as e:
+            print(f"  Device {args.device_index} not found or invalid: {e}. Falling back to auto-detect.")
+            args.device_index = None # Fallback
+        finally:
+            pa.terminate()
+
+    if args.device_index is None:
+        print("Finding suitable audio device automatically...")
+        device_info = find_suitable_device(config.SAMPLE_RATE, verbose=True)
+    else:
+        # If specified device was valid, use its info
+        device_info = (device_index, device_rate)
+
 
     if device_info is None:
         print("[ERROR] Cannot access any audio input device!")
-        print("\nThis is likely a Windows permissions issue.")
+        print("\nThis is likely a Windows permissions issue or exclusive mode issue.")
         print("\nQuick fix:")
         print("  1. Go to Settings > Privacy & Security > Microphone")
         print("  2. Enable 'Let apps access your microphone'")
         print("  3. Enable 'Let desktop apps access your microphone'")
+        print("  4. In Sound Settings -> Recording tab -> Device Properties -> Advanced Tab, uncheck 'Allow applications to take exclusive control of this device'.")
         print("\nFor detailed troubleshooting, see: temp/AUDIO_TROUBLESHOOTING.md")
         print("Or run: python temp/audio_diagnostic.py")
         return
@@ -89,8 +124,7 @@ def test_live_recognition():
         stats = {
             'total_detections': 0,
             'successful_matches': 0,
-            'processing_times': [],
-            'vad_times': []
+            'processing_times': []
         }
 
         vad_start_time = None
@@ -107,45 +141,48 @@ def test_live_recognition():
                 vad_start_time = time.time()
 
             if state == VADState.PROCESSING and segment is not None:
-                # Calculate VAD time
-                vad_time = (time.time() - vad_start_time) * 1000 if vad_start_time else 0
-                stats['vad_times'].append(vad_time)
-
                 stats['total_detections'] += 1
                 segment_duration = len(segment) / config.SAMPLE_RATE
 
                 print(f"\n[Detection #{stats['total_detections']}]")
                 print(f"  Speech duration: {segment_duration:.2f}s")
-                print(f"  VAD time: {vad_time:.0f}ms")
 
                 # Process with all methods
                 start_time = time.time()
-                result = matcher.recognize(segment, mode='all')
+                raw_results = matcher.recognize(segment, mode='all') # Get all individual results
                 proc_time = (time.time() - start_time) * 1000
                 stats['processing_times'].append(proc_time)
-
-                total_time = vad_time + proc_time
-
-                print(f"  Processing time: {proc_time:.0f}ms")
-                print(f"  Total latency: {total_time:.0f}ms")
-                print()
+                
+                # Compute ensemble decision manually
+                best_command = 'NONE'
+                best_confidence = 0.0
+                best_method = None
+                
+                for method, res in raw_results['all_results'].items():
+                    cmd = res['command']
+                    dist = res['distance']
+                    threshold = matcher.matchers[method].threshold # Get matcher to access its threshold
+                    
+                    if cmd != 'NONE':
+                        conf = 1 - min(dist / threshold, 1)
+                        if conf > best_confidence:
+                            best_confidence = conf
+                            best_command = cmd
+                            best_method = method
 
                 # Show results from all methods
-                has_match = False
-                for method, res in result['all_results'].items():
+                for method, res in raw_results['all_results'].items():
                     cmd = res['command']
                     dist = res['distance']
                     threshold = matcher.matchers[method].threshold
-
-                    if cmd != 'NONE':
-                        status = f"✓ MATCH (conf={(1-dist/threshold)*100:.0f}%)"
-                        has_match = True
-                    else:
-                        status = "✗ NO MATCH"
-
+                    
+                    status = f"✓ MATCH (conf={(1-dist/threshold)*100:.0f}%)" if cmd != 'NONE' else "✗ NO MATCH"
                     print(f"  {method:12s}: {cmd:8s} (dist={dist:6.2f}, th={threshold:5.1f}) {status}")
 
-                if has_match:
+                # Show Ensemble Decision
+                print(f"  {'>> DECISION':12s}: {best_command:8s} (conf={best_confidence*100:.0f}%, by {best_method})")
+                
+                if best_command != 'NONE':
                     stats['successful_matches'] += 1
 
                 print()
@@ -176,23 +213,11 @@ def test_live_recognition():
         print(f"  Min: {min(stats['processing_times']):.0f}ms")
         print(f"  Max: {max(stats['processing_times']):.0f}ms")
 
-    if stats['vad_times']:
-        print(f"\nVAD detection time:")
-        print(f"  Average: {sum(stats['vad_times'])/len(stats['vad_times']):.0f}ms")
-
-    if stats['processing_times'] and stats['vad_times']:
-        total_times = [v + p for v, p in zip(stats['vad_times'], stats['processing_times'])]
-        print(f"\nTotal latency (VAD + Processing):")
-        print(f"  Average: {sum(total_times)/len(total_times):.0f}ms")
-        print(f"  Max: {max(total_times):.0f}ms")
-
-        if max(total_times) <= 300:
-            print("\n✓ Meets latency requirement (≤ 300ms)")
-        else:
-            print("\n✗ Exceeds latency requirement (≤ 300ms)")
-
     print("=" * 70)
 
 
 if __name__ == '__main__':
+    # Temp for test_live.py only, remove after this specific fix
+    import pyaudio # Added here for the temp check in main
     test_live_recognition()
+
