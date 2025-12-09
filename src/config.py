@@ -7,8 +7,15 @@ CHUNK_SIZE = 512  # ~32ms at 16kHz
 DTYPE = 'int16'
 
 # VAD settings
+# --- Default (Quiet/Normal Environment) ---
 VAD_ENERGY_THRESHOLD_MULT_LOW = 2.0
 VAD_ENERGY_THRESHOLD_MULT_HIGH = 5.0
+
+# --- NOISY Environment Presets (Uncomment to use for deployment) ---
+# If the background is loud, increase these to prevent VAD from triggering on background chatter.
+# VAD_ENERGY_THRESHOLD_MULT_LOW = 3.5  # Requires signal to be 3.5x louder than background
+# VAD_ENERGY_THRESHOLD_MULT_HIGH = 6.0 # Requires strong speech peak
+
 VAD_MIN_SPEECH_MS = 200
 VAD_MAX_SPEECH_MS = 1500
 VAD_SILENCE_MS = 300  # silence to end recording
@@ -32,10 +39,12 @@ TEMPLATE_FIXED_FRAMES = 50  # for mel template resizing
 STATS_SEGMENTS = 3  # number of segments for stats features
 
 # Recognition thresholds (to be tuned)
-THRESHOLD_MFCC_DTW = 115.0  # Tuned based on QA: max 108
-THRESHOLD_STATS = 350.0     # Tuned based on QA: max 344
-THRESHOLD_MEL = 45.0        # Tuned based on QA: max 44
-THRESHOLD_LPC = 2.1         # Tuned based on QA: max 1.995
+# In noisy environments, you might need to INCREASE these slightly (e.g., +10-20%)
+# because the input signal will be mixed with noise, making it "further" from the clean template.
+THRESHOLD_MFCC_DTW = 125.0  # Increased to cover max valid dist ~118
+THRESHOLD_STATS = 600.0     # Increased due to more features (deltas+ZCR)
+THRESHOLD_MEL = 55.0        # Increased to reduce false negatives (dist ~30)
+THRESHOLD_LPC = 50.0        # Switched to LPCC+DTW, needs higher threshold
 
 # Command list
 COMMANDS = ['START', 'PAUSE', 'JUMP', 'MAGNET', 'INVERT']

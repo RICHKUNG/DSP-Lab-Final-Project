@@ -57,10 +57,22 @@ class VoiceCommander:
         )
         self.audio_stream.start()
 
-        print("Calibrating background noise (stay quiet)...")
+        # Dynamic Noise Calibration
+        print("\n" + "="*50)
+        print("   ENVIRONMENT CALIBRATION")
+        print("   Please stay QUIET for 2 seconds...")
+        print("="*50)
         time.sleep(0.5)
-        bg_rms = self.audio_stream.measure_background(1500)
+        
+        # 1. Measure RMS for VAD
+        bg_rms = self.audio_stream.measure_background(1000)
         print(f"Background RMS: {bg_rms:.1f}")
+
+        # 2. Collect dynamic noise templates for Recognizer
+        noise_samples = self._collect_noise_samples(duration_ms=1500, num_samples=5)
+        print(f"Captured {len(noise_samples)} noise profiles from current environment.")
+        for ns in noise_samples:
+            self.matcher.add_noise_template(ns)
 
         self.vad = VAD(background_rms=bg_rms)
         self._running = True
@@ -75,6 +87,39 @@ class VoiceCommander:
             print("\nStopping...")
         finally:
             self.stop()
+
+    def _collect_noise_samples(self, duration_ms=1500, num_samples=5):
+        """Collect noise samples from live environment."""
+        import numpy as np
+        
+        samples_needed = int(config.SAMPLE_RATE * duration_ms / 1000)
+        collected = []
+        
+        # Drain buffer
+        self.audio_stream.get_chunk()
+
+        while len(collected) < samples_needed:
+            chunk = self.audio_stream.get_chunk(timeout=0.1)
+            if len(chunk) > 0:
+                collected.extend(chunk)
+            else:
+                time.sleep(0.01)
+
+        audio = np.array(collected[:samples_needed], dtype=np.int16)
+
+        # Split into segments
+        segment_len = len(audio) // num_samples
+        noise_samples = []
+
+        for i in range(num_samples):
+            start = i * segment_len
+            end = start + segment_len
+            segment = audio[start:end]
+            # Verify it's not empty
+            if len(segment) > 0:
+                noise_samples.append(segment)
+
+        return noise_samples
 
     def _recognition_loop(self):
         """Main recognition loop."""

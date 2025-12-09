@@ -113,6 +113,9 @@ class TemplateMatcher:
             return dtw_distance_normalized(feat1, feat2)
         elif self.method == 'mel':
             return mel_distance(feat1, feat2)
+        elif self.method == 'lpc':
+            # Use DTW for LPCC sequence
+            return dtw_distance_normalized(feat1, feat2)
         else:
             return np.sqrt(np.sum((feat1 - feat2) ** 2))
 
@@ -223,38 +226,99 @@ class MultiMethodMatcher:
                 'noise_distance': noise_dist
             }
 
-        if mode == 'all':
-            return {'all_results': results}
+        # Weighted Ensemble Logic
+        # Weights based on QA performance: MFCC is best for commands, Mel is best for noise rejection
+        weights = {
+            'mfcc_dtw': 4.0,  # MVP: High accuracy
+            'mel': 2.0,       # Conservative noise filter
+            'stats': 0.0,     # Disabled: Poor performance, biases towards START
+            'lpc': 1.5        # Good noise rejection, but struggles with short commands
+        }
 
-        best_method = None
-        best_command = 'NONE'
-        best_confidence = 0
-        best_template = ''
-
-        # Count how many methods say NOISE
-        noise_votes = sum(1 for r in results.values() if r['command'] == 'NOISE')
+        command_scores = {}
+        total_weight = 0
 
         for method, result in results.items():
-            if result['command'] not in ('NONE', 'NOISE'):
-                threshold = self.matchers[method].threshold
-                conf = 1 - min(result['distance'] / threshold, 1)
-                if conf > best_confidence:
-                    best_confidence = conf
-                    best_command = result['command']
+            cmd = result['command']
+            weight = weights.get(method, 1.0)
+            
+            # Confidence calculation
+            threshold = self.matchers[method].threshold
+            # If distance > threshold (NONE), confidence is 0
+            # If NOISE, confidence is based on how much closer it is to noise than command?
+            # For simplicity, if cmd is valid, conf = 1 - dist/thresh
+            
+            if cmd not in ('NONE', 'NOISE'):
+                conf = max(0, 1 - (result['distance'] / threshold))
+            elif cmd == 'NOISE':
+                conf = 1.0 # High confidence if it explicitly matches noise template
+            else:
+                conf = 0.0
+
+            # Accumulate scores
+            # We treat 'NOISE' and 'NONE' as distinct votes
+            vote_cmd = cmd
+            
+            if vote_cmd not in command_scores:
+                command_scores[vote_cmd] = 0.0
+            
+            command_scores[vote_cmd] += weight * conf
+            total_weight += weight
+
+        # Special Veto Rule: 
+        # If Mel says NOISE, we lean heavily towards NOISE unless MFCC is VERY confident
+        mel_res = results.get('mel')
+        mfcc_res = results.get('mfcc_dtw')
+        
+        if mel_res and mel_res['command'] == 'NOISE':
+            # Check MFCC confidence
+            mfcc_conf = 0
+            if mfcc_res and mfcc_res['command'] not in ('NONE', 'NOISE'):
+                 mfcc_conf = max(0, 1 - (mfcc_res['distance'] / self.matchers['mfcc_dtw'].threshold))
+            
+            # If MFCC is not super confident (< 0.7), allow Mel to veto
+            if mfcc_conf < 0.7:
+                 command_scores['NOISE'] = command_scores.get('NOISE', 0) + 5.0 # Boost NOISE score
+
+        # Find best command
+        best_command = 'NONE'
+        max_score = -1.0
+        
+        for cmd, score in command_scores.items():
+            if score > max_score:
+                max_score = score
+                best_command = cmd
+
+        # Fallback for method reporting
+        best_method = 'ensemble' 
+        best_confidence = max_score / sum(weights.values()) # Approximate normalized confidence
+        best_template = ''
+        
+        # Try to find the template from the method that voted for the winner with highest weight
+        highest_weight_for_winner = -1
+        for method, result in results.items():
+            if result['command'] == best_command:
+                w = weights.get(method, 1.0)
+                if w > highest_weight_for_winner:
+                    highest_weight_for_winner = w
                     best_method = method
                     best_template = result['best_template']
 
-        # If majority of methods say NOISE, override to NOISE
-        if noise_votes > len(results) // 2 and best_command == 'NONE':
-            best_command = 'NOISE'
-
-        return {
+        response = {
             'command': best_command,
             'confidence': best_confidence,
             'method': best_method,
             'best_template': best_template,
             'all_results': results
         }
+
+        if mode == 'all':
+            return response
+        
+        if mode == 'best':
+             del response['all_results']
+        
+        return response
 
     def load_templates_from_dir(self, template_dir: str):
         """

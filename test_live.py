@@ -46,9 +46,8 @@ def collect_noise_samples(audio_stream, duration_ms=2000, num_samples=5):
         start = i * segment_len
         end = start + segment_len
         segment = audio[start:end]
-        # Only use segments with some energy (not completely silent)
-        rms = np.sqrt(np.mean(segment.astype(np.float32) ** 2))
-        if rms > 10:  # Minimum energy threshold
+        # Always use the segment, even if it's quiet
+        if len(segment) > 0:
             noise_samples.append(segment)
 
     return noise_samples

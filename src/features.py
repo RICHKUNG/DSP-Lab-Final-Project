@@ -60,6 +60,7 @@ def extract_stats_features(audio: np.ndarray, n_segments: int = None) -> np.ndar
     Extract segmental statistics features.
 
     Divides MFCC sequence into segments and computes mean/std for each.
+    Also includes Zero Crossing Rate (ZCR) stats.
 
     Args:
         audio: Audio samples
@@ -71,13 +72,31 @@ def extract_stats_features(audio: np.ndarray, n_segments: int = None) -> np.ndar
     if n_segments is None:
         n_segments = config.STATS_SEGMENTS
 
-    mfcc = extract_mfcc(audio, include_delta=False)
+    # 1. Extract MFCCs with deltas
+    mfcc = extract_mfcc(audio, include_delta=True)
     n_frames = mfcc.shape[0]
-    n_features = mfcc.shape[1]
+    n_mfcc_feats = mfcc.shape[1]
+
+    # 2. Extract ZCR
+    zcr = librosa.feature.zero_crossing_rate(
+        y=audio, 
+        frame_length=config.N_FFT, 
+        hop_length=config.HOP_LENGTH
+    ).T # (n_frames, 1)
+    
+    # Ensure lengths match (librosa padding might cause slight mismatch)
+    min_len = min(len(mfcc), len(zcr))
+    mfcc = mfcc[:min_len]
+    zcr = zcr[:min_len]
+    n_frames = min_len
+
+    # Concatenate features
+    combined_features = np.hstack([mfcc, zcr])
+    n_total_feats = combined_features.shape[1]
 
     if n_frames < n_segments:
         pad_frames = n_segments - n_frames
-        mfcc = np.vstack([mfcc, np.zeros((pad_frames, n_features))])
+        combined_features = np.vstack([combined_features, np.zeros((pad_frames, n_total_feats))])
         n_frames = n_segments
 
     segment_size = n_frames // n_segments
@@ -86,9 +105,12 @@ def extract_stats_features(audio: np.ndarray, n_segments: int = None) -> np.ndar
     for i in range(n_segments):
         start = i * segment_size
         end = start + segment_size if i < n_segments - 1 else n_frames
-        segment = mfcc[start:end]
+        segment = combined_features[start:end]
+        
+        # Compute mean and std for this segment
         seg_mean = np.mean(segment, axis=0)
         seg_std = np.std(segment, axis=0)
+        
         features.extend(seg_mean)
         features.extend(seg_std)
 
@@ -231,18 +253,48 @@ def compute_lpc(frame: np.ndarray, order: int = None) -> np.ndarray:
     return lpc
 
 
+def lpc_to_lpcc(lpc: np.ndarray, order: int, cep_order: int) -> np.ndarray:
+    """
+    Convert LPC coefficients to LPC Cepstral Coefficients (LPCC).
+    
+    Recursive formula:
+    c[0] = ln(gain) (usually ignored or log energy)
+    c[n] = -a[n] - sum(k=1 to n-1) (k/n) * c[k] * a[n-k]  for 1 <= n <= p
+    c[n] = - sum(k=n-p to n-1) (k/n) * c[k] * a[n-k]      for n > p
+    """
+    lpcc = np.zeros(cep_order)
+    
+    # We assume LPC coeffs a[1]...a[p] are passed (a[0]=1 is implicit)
+    # Note: standard definition uses a[k] positive in synthesis filter 1/A(z)
+    # A(z) = 1 + sum(a[k]z^-k). Scipy/Levinson returns these a[k].
+    
+    for n in range(1, cep_order + 1):
+        sum_term = 0.0
+        if n <= order:
+            sum_term = lpc[n-1] # a[n]
+            for k in range(1, n):
+                sum_term += (k / n) * lpcc[k-1] * lpc[n-k-1]
+            lpcc[n-1] = -sum_term
+        else:
+            for k in range(n - order, n):
+                sum_term += (k / n) * lpcc[k-1] * lpc[n-k-1]
+            lpcc[n-1] = -sum_term
+            
+    return lpcc
+
+
 def extract_lpc_features(audio: np.ndarray, order: int = None) -> np.ndarray:
     """
     Extract LPC-based features from audio.
-
-    Computes mean and std of LPC coefficients across all frames.
+    
+    Now returns a sequence of LPCC (Cepstral) vectors for DTW matching.
 
     Args:
         audio: Audio samples
         order: LPC order
 
     Returns:
-        Feature vector (2 * order dimensions)
+        Feature sequence (n_frames, cep_order)
     """
     if order is None:
         order = config.LPC_ORDER
@@ -255,20 +307,23 @@ def extract_lpc_features(audio: np.ndarray, order: int = None) -> np.ndarray:
     frame_length = int(config.LPC_FRAME_MS * config.SAMPLE_RATE / 1000)
     hop_length = int(config.LPC_HOP_MS * config.SAMPLE_RATE / 1000)
 
-    lpc_frames = []
+    lpcc_frames = []
+    cep_order = order # Use same order for cepstrum
+
     for start in range(0, len(audio) - frame_length, hop_length):
         frame = audio[start:start + frame_length]
+        
+        # Pre-emphasis
+        frame = np.append(frame[0], frame[1:] - 0.97 * frame[:-1])
+        
         lpc = compute_lpc(frame, order)
-        lpc_frames.append(lpc)
+        lpcc = lpc_to_lpcc(lpc, order, cep_order)
+        lpcc_frames.append(lpcc)
 
-    if len(lpc_frames) == 0:
-        return np.zeros(2 * order, dtype=np.float32)
+    if len(lpcc_frames) == 0:
+        return np.zeros((1, cep_order), dtype=np.float32)
 
-    lpc_frames = np.array(lpc_frames)
-    lpc_mean = np.mean(lpc_frames, axis=0)
-    lpc_std = np.std(lpc_frames, axis=0)
-
-    return np.concatenate([lpc_mean, lpc_std]).astype(np.float32)
+    return np.array(lpcc_frames, dtype=np.float32)
 
 
 def extract_formants(audio: np.ndarray, n_formants: int = 3, order: int = None) -> np.ndarray:
