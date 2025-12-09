@@ -56,6 +56,17 @@ python -m src.main --live --templates .
 python -m src.main --test "開始1.m4a" --templates .
 ```
 
+### 進階魯棒性測試 (Arena Test)
+此工具使用 Leave-One-Out Cross-Validation 策略，針對速度、音高、噪音與音量進行壓力測試：
+```bash
+python temp/test_file_input.py
+```
+測試項目包含：
+- **Speed**: 0.7x ~ 1.3x
+- **Pitch**: -2.5 ~ +2.5 半音
+- **Noise**: 100dB (Clean) ~ 10dB (Noisy)
+- **Volume**: 0.3x ~ 3.0x
+
 ## 模板檔案命名規則
 
 檔案名稱需包含中文指令名稱：

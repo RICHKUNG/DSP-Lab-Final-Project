@@ -44,8 +44,6 @@ def apply_augmentation(audio: np.ndarray, type: str, value: float) -> np.ndarray
         
     elif type == 'Noise':
         if value >= 100: return audio
-        # SNR = 10 * log10(P_signal / P_noise)
-        # P_noise = P_signal / 10^(SNR/10)
         p_signal = np.mean(y_float ** 2)
         if p_signal == 0: return audio
         
@@ -94,9 +92,6 @@ class ArenaResult:
     def accuracy(self) -> float:
         return self.correct / self.total if self.total > 0 else 0.0
 
-    def __repr__(self):
-        return f"Acc: {self.accuracy()*100:5.1f}% (C:{self.correct} W:{self.wrong_command} N:{self.no_match})"
-
 def run_arena():
     print("=" * 70)
     print("Bio-Voice Commander - Advanced Arena Test")
@@ -110,8 +105,6 @@ def run_arena():
     all_files = sorted(glob.glob(os.path.join(template_dir, "*.*")))
     valid_files = []
     
-    # Filter out non-audio or unknowns if any (and noise files if we treat them separately)
-    # The load_templates logic handles noise/unknowns, but here we want explicit control
     for f in all_files:
         if get_label_from_filename(f) != "UNKNOWN" and 'noise' not in os.path.basename(f).lower():
             valid_files.append(f)
@@ -120,19 +113,13 @@ def run_arena():
 
     # Stats: Suite -> Method -> Value -> ArenaResult
     # Structure: stats[suite_name][method_name][test_value] = ArenaResult
-    methods = ['mfcc_dtw', 'stats', 'mel', 'lpc', 'ensemble']
+    methods = ['mfcc_dtw', 'mel', 'lpc', 'ensemble']
     stats = {}
-    
-    # Time stats: Suite -> Value -> List[float]
-    time_stats = {}
     
     for suite in TEST_SUITES:
         stats[suite] = {}
-        time_stats[suite] = {}
-        for val in TEST_SUITES[suite]:
-            time_stats[suite][val] = []
-            for m in methods:
-                stats[suite][m] = {val: ArenaResult() for val in TEST_SUITES[suite]}
+        for m in methods:
+            stats[suite][m] = {val: ArenaResult() for val in TEST_SUITES[suite]}
 
     # 2. Leave-One-Out Loop
     for idx, test_file in enumerate(valid_files):
@@ -141,18 +128,14 @@ def run_arena():
         
         print(f"\n[{idx+1}/{len(valid_files)}] Testing: {test_filename} ({expected_label})")
         
-        # Load audio once
         try:
             original_audio = load_audio_file(test_file)
         except Exception as e:
             print(f"  Error loading {test_filename}: {e}")
             continue
 
-        # Prepare Matcher with REMAINING templates
         matcher = MultiMethodMatcher()
         
-        # Manually load other templates
-        # We need to mimic matcher.load_templates_from_dir but skip test_file
         train_count = 0
         for train_file in valid_files:
             if train_file == test_file:
@@ -160,8 +143,6 @@ def run_arena():
             
             lbl = get_label_from_filename(train_file)
             try:
-                # We need to re-load audio for training templates
-                # (Optimization: could cache this, but dataset is small)
                 audio_t = load_audio_file(train_file)
                 matcher.add_template(lbl, audio_t, os.path.basename(train_file))
                 train_count += 1
@@ -174,27 +155,15 @@ def run_arena():
 
         # 3. Run Test Suites
         for suite_name, test_values in TEST_SUITES.items():
-            # print(f"  > Suite: {suite_name}")
             for val in test_values:
                 # Augment
                 input_audio = apply_augmentation(original_audio, suite_name, val)
                 
                 # Recognize
-                t0 = time.time()
                 results = matcher.recognize(input_audio, mode='all')
-                dt_ms = (time.time() - t0) * 1000
                 
-                # Print real-time check (only for standard conditions to avoid clutter, or all?)
-                # User asked for "Every time", so we print every time but compact.
-                # Format: [Speed 1.0x] Predicted: JUMP (23ms)
+                # Record Ensemble
                 ensemble_pred = results['command']
-                match_mark = "✓" if ensemble_pred == expected_label else "✗"
-                label_val = f"{val:g}"
-                print(f"    [{suite_name} {label_val:>4}] {ensemble_pred:8s} {match_mark} ({dt_ms:.0f}ms)")
-                
-                # Record Stats
-                time_stats[suite_name][val].append(dt_ms)
-                
                 stats[suite_name]['ensemble'][val].update(expected_label, ensemble_pred)
                 
                 # Record Individuals
@@ -202,6 +171,9 @@ def run_arena():
                     if method == 'ensemble': continue
                     pred = results['all_results'][method]['command']
                     stats[suite_name][method][val].update(expected_label, pred)
+                
+                match_mark = "✓" if ensemble_pred == expected_label else "✗"
+                print(f"    [{suite_name} {val:g}] {ensemble_pred:8s} {match_mark}")
 
     # 4. Report
     print("\n" + "=" * 80)
@@ -215,7 +187,7 @@ def run_arena():
         print(f"\n>> {suite_name.upper()} ROBUSTNESS")
         
         # Header
-        header = f"{{'Method':<12}} |";
+        header = f"{'Method':<12} |";
         for val in test_values:
             label = f"{val:g}"
             if suite_name == 'Speed': label += 'x'
@@ -227,7 +199,7 @@ def run_arena():
         print("-" * len(header))
 
         for method in methods:
-            row = f"{method:<12} |"
+            row = f"{method:<12} |";
             suite_acc_sum = 0.0
             for val in test_values:
                 res = stats[suite_name][method][val]
@@ -236,25 +208,23 @@ def run_arena():
                 row += f" {acc*100:6.0f}% |"
             print(row)
             
-            # Add to overall
             overall_scores[method] += suite_acc_sum
-            
-        # Time Stats
-        print(f"{{'Avg Time':<12}} |", end="")
-        for val in test_values:
-             times = time_stats[suite_name][val]
-             avg_t = sum(times)/len(times) if times else 0
-             print(f" {avg_t:4.0f}ms  |", end="")
-        print()
+        
+        total_scenarios += len(test_values)
 
     print("\n" + "=" * 80)
     print("PROPOSED IMPROVEMENTS")
     print("=" * 80)
     
-    # Analyze Overall
-    best_method = max(overall_scores, key=overall_scores.get)
-    best_avg = overall_scores[best_method] / total_scenarios
-    print(f"Best Overall Method: {best_method} (Avg Acc: {best_avg*100:.1f}%)")
+    print(f"Total Scenarios: {total_scenarios}")
+    
+    if total_scenarios > 0:
+        best_method = max(overall_scores, key=overall_scores.get)
+        best_avg = overall_scores[best_method] / total_scenarios
+        print(f"Best Overall Method: {best_method} (Avg Acc: {best_avg*100:.1f}%)")
+    else:
+        print("No scenarios run!")
+        return
     
     proposals = []
     
@@ -269,23 +239,8 @@ def run_arena():
     if noise_drops[worst_noise_method] > 0.4:
          proposals.append(f"- {worst_noise_method} fails in noise (drop {noise_drops[worst_noise_method]*100:.0f}%). Decrease its weight in noisy conditions.")
 
-    # Volume check
-    vol_stats = stats['Volume']['ensemble']
-    low_vol = vol_stats[0.3].accuracy()
-    if low_vol < 0.6:
-        proposals.append(f"- Low volume performance is poor ({low_vol*100:.0f}%). Implement normalization/AGC.")
-
-    # Pitch check
-    pitch_stats = stats['Pitch']['ensemble']
-    pitch_var = pitch_stats[-2.5].accuracy()
-    if pitch_var < 0.7:
-        proposals.append("- Pitch shifting degrades performance. Consider adding pitch-augmented templates.")
-
     for p in proposals:
         print(p)
-    
-    if not proposals:
-        print("System appears robust across all tested dimensions!")
 
 if __name__ == '__main__':
     run_arena()

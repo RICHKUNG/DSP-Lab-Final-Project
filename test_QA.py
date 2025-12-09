@@ -500,9 +500,9 @@ def test_qa():
 
                 print(f"\n>>> ENSEMBLE: {best_command}", end="")
                 if best_method:
-                    print(f" (by {best_method}, conf={best_confidence*100:.1f}%)")
+                    print(f" (by {best_method}, conf={best_confidence*100:.1f}%, time={total_proc_time:.0f}ms)")
                 else:
-                    print()
+                    print(f" (time={total_proc_time:.0f}ms)")
 
                 # Get user label
                 ground_truth = get_user_label()

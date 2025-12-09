@@ -24,7 +24,7 @@ VAD_PRE_ROLL_MS = 100  # pre-roll buffer
 # Feature extraction settings
 N_MFCC = 13
 N_FFT = 1024
-HOP_LENGTH = 256
+HOP_LENGTH = 512
 N_MELS = 128
 FMIN = 80
 FMAX = 7600
@@ -32,7 +32,7 @@ FMAX = 7600
 # LPC settings
 LPC_ORDER = 12
 LPC_FRAME_MS = 25
-LPC_HOP_MS = 10
+LPC_HOP_MS = 16
 
 # Template settings
 TEMPLATE_FIXED_FRAMES = 50  # for mel template resizing
@@ -41,10 +41,10 @@ STATS_SEGMENTS = 3  # number of segments for stats features
 # Recognition thresholds (to be tuned)
 # In noisy environments, you might need to INCREASE these slightly (e.g., +10-20%)
 # because the input signal will be mixed with noise, making it "further" from the clean template.
-THRESHOLD_MFCC_DTW = 125.0  # Increased to cover max valid dist ~118
+THRESHOLD_MFCC_DTW = 140.0  # Increased to cover max valid dist ~118
 THRESHOLD_STATS = 600.0     # Increased due to more features (deltas+ZCR)
-THRESHOLD_MEL = 55.0        # Increased to reduce false negatives (dist ~30)
-THRESHOLD_LPC = 50.0        # Switched to LPCC+DTW, needs higher threshold
+THRESHOLD_MEL = 0.45        # Cosine distance (0.0-1.0), <0.4 is good match
+THRESHOLD_LPC = 80.0        # Switched to LPCC+DTW, needs higher threshold
 
 # Command list
 COMMANDS = ['START', 'PAUSE', 'JUMP', 'MAGNET', 'INVERT']

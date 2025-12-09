@@ -190,104 +190,40 @@ def mel_distance(mel1: np.ndarray, mel2: np.ndarray, metric: str = 'euclidean') 
 # LPC and Formant Features
 # =============================================================================
 
-def _autocorr(x: np.ndarray, order: int) -> np.ndarray:
-    """Compute autocorrelation coefficients."""
-    n = len(x)
-    r = np.zeros(order + 1)
-    for i in range(order + 1):
-        r[i] = np.sum(x[:n-i] * x[i:])
-    return r
-
-
-def _levinson_durbin(r: np.ndarray, order: int) -> np.ndarray:
-    """Levinson-Durbin algorithm for LPC coefficients."""
-    a = np.zeros(order + 1)
-    e = np.zeros(order + 1)
-
-    a[0] = 1.0
-    e[0] = r[0]
-
-    for i in range(1, order + 1):
-        acc = r[i]
-        for j in range(1, i):
-            acc += a[j] * r[i - j]
-
-        if e[i-1] == 0:
-            k = 0
-        else:
-            k = -acc / e[i-1]
-
-        a_new = a.copy()
-        a_new[i] = k
-        for j in range(1, i):
-            a_new[j] = a[j] + k * a[i - j]
-
-        a = a_new
-        e[i] = (1 - k * k) * e[i-1]
-
-    return a[1:]
-
-
-def compute_lpc(frame: np.ndarray, order: int = None) -> np.ndarray:
-    """
-    Compute LPC coefficients for a single frame.
-
-    Args:
-        frame: Audio frame (windowed)
-        order: LPC order (default from config)
-
-    Returns:
-        LPC coefficients array
-    """
-    if order is None:
-        order = config.LPC_ORDER
-
-    windowed = frame * np.hamming(len(frame))
-    r = _autocorr(windowed, order)
-
-    if r[0] == 0:
-        return np.zeros(order)
-
-    r = r / r[0]
-    lpc = _levinson_durbin(r, order)
-    return lpc
-
-
-def lpc_to_lpcc(lpc: np.ndarray, order: int, cep_order: int) -> np.ndarray:
+def lpc_to_lpcc(a: np.ndarray, order: int, cep_order: int) -> np.ndarray:
     """
     Convert LPC coefficients to LPC Cepstral Coefficients (LPCC).
     
-    Recursive formula:
-    c[0] = ln(gain) (usually ignored or log energy)
-    c[n] = -a[n] - sum(k=1 to n-1) (k/n) * c[k] * a[n-k]  for 1 <= n <= p
-    c[n] = - sum(k=n-p to n-1) (k/n) * c[k] * a[n-k]      for n > p
+    Args:
+        a: LPC coefficients [1, a1, a2, ...]
+        order: LPC order
+        cep_order: Output cepstral order
     """
-    lpcc = np.zeros(cep_order)
-    
-    # We assume LPC coeffs a[1]...a[p] are passed (a[0]=1 is implicit)
-    # Note: standard definition uses a[k] positive in synthesis filter 1/A(z)
-    # A(z) = 1 + sum(a[k]z^-k). Scipy/Levinson returns these a[k].
+    c = np.zeros(cep_order)
+    # a array includes a0=1 at index 0
     
     for n in range(1, cep_order + 1):
         sum_term = 0.0
-        if n <= order:
-            sum_term = lpc[n-1] # a[n]
-            for k in range(1, n):
-                sum_term += (k / n) * lpcc[k-1] * lpc[n-k-1]
-            lpcc[n-1] = -sum_term
-        else:
-            for k in range(n - order, n):
-                sum_term += (k / n) * lpcc[k-1] * lpc[n-k-1]
-            lpcc[n-1] = -sum_term
-            
-    return lpcc
+        # summation limit: min(n-1, order)
+        # k goes from 1 to n-1
+        # Formula: c[n] = -a[n] - (1/n) * sum(k=1..n-1) [ (n-k) * a[k] * c[n-k] ]
+        
+        for k in range(1, n):
+            if k <= order:
+                sum_term += (n - k) * a[k] * c[n - k - 1]
+        
+        current_a = a[n] if n <= order else 0.0
+        c[n-1] = -current_a - (1.0 / n) * sum_term
+    
+    # Clip to prevent numerical explosion
+    c = np.clip(c, -50.0, 50.0)
+        
+    return c
 
 
 def extract_lpc_features(audio: np.ndarray, order: int = None) -> np.ndarray:
     """
-    Extract LPC-based features from audio.
-    
-    Now returns a sequence of LPCC (Cepstral) vectors for DTW matching.
+    Extract LPC-based features from audio using librosa.lpc.
 
     Args:
         audio: Audio samples
@@ -304,26 +240,36 @@ def extract_lpc_features(audio: np.ndarray, order: int = None) -> np.ndarray:
         if np.max(np.abs(audio)) > 1.0:
             audio = audio / 32768.0
 
+    # 1. Pre-emphasis
+    audio = librosa.effects.preemphasis(audio)
+
+    # 2. Frame parameters
     frame_length = int(config.LPC_FRAME_MS * config.SAMPLE_RATE / 1000)
     hop_length = int(config.LPC_HOP_MS * config.SAMPLE_RATE / 1000)
 
-    lpcc_frames = []
-    cep_order = order # Use same order for cepstrum
+    # 3. Framing with Librosa (efficient stride tricks)
+    # Output is (frame_length, n_frames)
+    frames = librosa.util.frame(audio, frame_length=frame_length, hop_length=hop_length)
+    
+    # 4. Windowing
+    window = np.hamming(frame_length)
+    frames = frames * window[:, np.newaxis]
+    
+    # 5. Compute LPC and LPCC for each frame
+    # librosa.lpc only accepts 1D input in older versions, 
+    # but let's iterate. The number of frames is ~100-200, so a simple loop is fine
+    # if the inner LPC calc is fast (which librosa.lpc is).
+    
+    n_frames = frames.shape[1]
+    lpcc_frames = np.zeros((n_frames, order), dtype=np.float32)
+    
+    for i in range(n_frames):
+        frame = frames[:, i]
+        # librosa.lpc returns [1, a1, a2, ... ap]
+        a = librosa.lpc(frame, order=order)
+        lpcc_frames[i] = lpc_to_lpcc(a, order, order)
 
-    for start in range(0, len(audio) - frame_length, hop_length):
-        frame = audio[start:start + frame_length]
-        
-        # Pre-emphasis
-        frame = np.append(frame[0], frame[1:] - 0.97 * frame[:-1])
-        
-        lpc = compute_lpc(frame, order)
-        lpcc = lpc_to_lpcc(lpc, order, cep_order)
-        lpcc_frames.append(lpcc)
-
-    if len(lpcc_frames) == 0:
-        return np.zeros((1, cep_order), dtype=np.float32)
-
-    return np.array(lpcc_frames, dtype=np.float32)
+    return lpcc_frames
 
 
 def extract_formants(audio: np.ndarray, n_formants: int = 3, order: int = None) -> np.ndarray:

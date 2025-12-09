@@ -112,16 +112,20 @@ class TemplateMatcher:
         if self.method == 'mfcc_dtw':
             return dtw_distance_normalized(feat1, feat2)
         elif self.method == 'mel':
-            return mel_distance(feat1, feat2)
+            return mel_distance(feat1, feat2, metric='cosine')
         elif self.method == 'lpc':
             # Use DTW for LPCC sequence
             return dtw_distance_normalized(feat1, feat2)
         else:
             return np.sqrt(np.sum((feat1 - feat2) ** 2))
 
-    def recognize(self, audio: np.ndarray) -> Tuple[str, float, str, List[Tuple[str, str, float]], float]:
+    def recognize(self, audio: np.ndarray, features: np.ndarray = None) -> Tuple[str, float, str, List[Tuple[str, str, float]], float]:
         """
         Recognize command from audio.
+
+        Args:
+            audio: Raw audio samples (used if features not provided)
+            features: Pre-computed features (optional optimization)
 
         Returns:
             (command, distance, best_template_name, all_distances, noise_distance)
@@ -131,7 +135,8 @@ class TemplateMatcher:
         if not self.templates:
             return ('NONE', float('inf'), '', [], float('inf'))
 
-        features = self._extract_features(audio)
+        if features is None:
+            features = self._extract_features(audio)
 
         best_command = 'NONE'
         best_distance = float('inf')
@@ -183,7 +188,7 @@ class MultiMethodMatcher:
             methods: List of methods to use (default: all)
         """
         if methods is None:
-            methods = ['mfcc_dtw', 'stats', 'mel', 'lpc']
+            methods = ['mfcc_dtw', 'mel', 'lpc']
 
         self.matchers = {m: TemplateMatcher(method=m) for m in methods}
 
@@ -215,9 +220,42 @@ class MultiMethodMatcher:
         Returns:
             Dict with recognition results
         """
+        # 1. Preprocess audio ONCE
+        processed_audio = preprocess_audio(audio)
+        
+        # 2. Extract features ONCE for each needed type
+        feature_cache = {}
+        
+        # We know we need MFCC, MEL, LPC. Stats is disabled.
+        # But to be safe with the 'methods' list, we check.
+        
+        if 'mfcc_dtw' in self.matchers:
+            feature_cache['mfcc_dtw'] = extract_mfcc(processed_audio)
+            
+        if 'mel' in self.matchers:
+            feature_cache['mel'] = extract_mel_template(processed_audio)
+            
+        if 'lpc' in self.matchers:
+            feature_cache['lpc'] = extract_lpc_features(processed_audio)
+            
+        # Skip 'stats' feature extraction entirely (saving time)
+        
         results = {}
         for method, matcher in self.matchers.items():
-            cmd, dist, best_tpl, all_dists, noise_dist = matcher.recognize(audio)
+            # Skip stats execution
+            if method == 'stats':
+                results[method] = {
+                    'command': 'NONE',
+                    'distance': float('inf'),
+                    'best_template': '',
+                    'all_distances': [],
+                    'noise_distance': float('inf')
+                }
+                continue
+                
+            # Use pre-computed features
+            feats = feature_cache.get(method)
+            cmd, dist, best_tpl, all_dists, noise_dist = matcher.recognize(audio, features=feats)
             results[method] = {
                 'command': cmd,
                 'distance': dist,
@@ -230,9 +268,9 @@ class MultiMethodMatcher:
         # Weights based on QA performance: MFCC is best for commands, Mel is best for noise rejection
         weights = {
             'mfcc_dtw': 4.0,  # MVP: High accuracy
-            'mel': 2.0,       # Conservative noise filter
-            'stats': 0.0,     # Disabled: Poor performance, biases towards START
-            'lpc': 1.5        # Good noise rejection, but struggles with short commands
+            'mel': 2.5,       # Increased: Very stable in noise
+            'stats': 0.0,     # Disabled: Poor performance
+            'lpc': 1.0        # Decreased: Fragile in high noise
         }
 
         command_scores = {}
