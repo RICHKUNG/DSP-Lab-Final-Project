@@ -10,7 +10,8 @@
       "Bash(C:/Users/user/anaconda3/envs/dspfp/python.exe:*)",
       "Bash(C:Usersuserminiconda3condabinmamba.bat --version)",
       "Bash(cmd /c \"C:\\Users\\user\\miniconda3\\condabin\\conda.bat run -n base mamba --version\")",
-      "Bash(powershell:*)"
+      "Bash(powershell:*)",
+      "Bash(cmd /c \"cd /d C:\\Users\\user\\Desktop\\DSPLab\\Final && C:\\Users\\user\\anaconda3\\envs\\dspfp\\python.exe -c \"\"from src.recognizers import MultiMethodMatcher; print(''Import OK'')\"\"\")"
     ],
     "deny": [],
     "ask": []

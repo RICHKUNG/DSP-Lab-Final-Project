@@ -65,6 +65,7 @@ class TemplateMatcher:
         """
         self.method = method
         self.templates: Dict[str, List[np.ndarray]] = {}
+        self.template_names: Dict[str, List[str]] = {}  # Track template filenames
 
         if threshold is None:
             threshold_map = {
@@ -91,12 +92,14 @@ class TemplateMatcher:
         else:
             raise ValueError(f"Unknown method: {self.method}")
 
-    def add_template(self, command: str, audio: np.ndarray):
+    def add_template(self, command: str, audio: np.ndarray, filename: str = None):
         """Add a template for a command."""
         features = self._extract_features(audio)
         if command not in self.templates:
             self.templates[command] = []
+            self.template_names[command] = []
         self.templates[command].append(features)
+        self.template_names[command].append(filename or "unknown")
 
     def _compute_distance(self, feat1: np.ndarray, feat2: np.ndarray) -> float:
         """Compute distance between features."""
@@ -107,32 +110,41 @@ class TemplateMatcher:
         else:
             return np.sqrt(np.sum((feat1 - feat2) ** 2))
 
-    def recognize(self, audio: np.ndarray) -> Tuple[str, float]:
+    def recognize(self, audio: np.ndarray) -> Tuple[str, float, str, List[Tuple[str, str, float]]]:
         """
         Recognize command from audio.
 
         Returns:
-            (command, distance) or ('NONE', inf) if no match
+            (command, distance, best_template_name, all_distances)
+            all_distances: List of (command, template_name, distance) sorted by distance
         """
         if not self.templates:
-            return ('NONE', float('inf'))
+            return ('NONE', float('inf'), '', [])
 
         features = self._extract_features(audio)
 
         best_command = 'NONE'
         best_distance = float('inf')
+        best_template = ''
+        all_distances = []
 
         for command, templates in self.templates.items():
-            for template in templates:
+            for i, template in enumerate(templates):
                 dist = self._compute_distance(features, template)
+                tpl_name = self.template_names[command][i]
+                all_distances.append((command, tpl_name, dist))
                 if dist < best_distance:
                     best_distance = dist
                     best_command = command
+                    best_template = tpl_name
+
+        # Sort by distance
+        all_distances.sort(key=lambda x: x[2])
 
         if best_distance > self.threshold:
-            return ('NONE', best_distance)
+            return ('NONE', best_distance, best_template, all_distances)
 
-        return (best_command, best_distance)
+        return (best_command, best_distance, best_template, all_distances)
 
 
 # =============================================================================
@@ -152,10 +164,10 @@ class MultiMethodMatcher:
 
         self.matchers = {m: TemplateMatcher(method=m) for m in methods}
 
-    def add_template(self, command: str, audio: np.ndarray):
+    def add_template(self, command: str, audio: np.ndarray, filename: str = None):
         """Add template to all matchers."""
         for matcher in self.matchers.values():
-            matcher.add_template(command, audio)
+            matcher.add_template(command, audio, filename)
 
     def recognize(self, audio: np.ndarray, mode: str = 'best') -> Dict:
         """
@@ -170,8 +182,13 @@ class MultiMethodMatcher:
         """
         results = {}
         for method, matcher in self.matchers.items():
-            cmd, dist = matcher.recognize(audio)
-            results[method] = {'command': cmd, 'distance': dist}
+            cmd, dist, best_tpl, all_dists = matcher.recognize(audio)
+            results[method] = {
+                'command': cmd,
+                'distance': dist,
+                'best_template': best_tpl,
+                'all_distances': all_dists
+            }
 
         if mode == 'all':
             return {'all_results': results}
@@ -179,6 +196,7 @@ class MultiMethodMatcher:
         best_method = None
         best_command = 'NONE'
         best_confidence = 0
+        best_template = ''
 
         for method, result in results.items():
             if result['command'] != 'NONE':
@@ -188,11 +206,13 @@ class MultiMethodMatcher:
                     best_confidence = conf
                     best_command = result['command']
                     best_method = method
+                    best_template = result['best_template']
 
         return {
             'command': best_command,
             'confidence': best_confidence,
             'method': best_method,
+            'best_template': best_template,
             'all_results': results
         }
 
@@ -212,24 +232,36 @@ class MultiMethodMatcher:
 
         template_path = Path(template_dir)
 
+        # Check cmd_templates folder first
+        cmd_templates_path = template_path / 'cmd_templates'
+        if cmd_templates_path.exists():
+            for audio_file in cmd_templates_path.glob('*.[mw][4a][av]'):
+                filename = audio_file.stem
+                for cn_cmd, en_cmd in config.COMMAND_MAPPING.items():
+                    if filename.startswith(cn_cmd):
+                        audio = load_audio_file(str(audio_file))
+                        self.add_template(en_cmd, audio, audio_file.name)
+                        print(f"Loaded template: {audio_file.name} -> {en_cmd}")
+                        break
+
         # Check for direct files (like 開始1.m4a)
         for audio_file in template_path.glob('*.[mw][4a][av]'):
             filename = audio_file.stem
             for cn_cmd, en_cmd in config.COMMAND_MAPPING.items():
                 if filename.startswith(cn_cmd):
                     audio = load_audio_file(str(audio_file))
-                    self.add_template(en_cmd, audio)
+                    self.add_template(en_cmd, audio, audio_file.name)
                     print(f"Loaded template: {audio_file.name} -> {en_cmd}")
                     break
 
         # Check for speaker subdirectories
         for speaker_dir in template_path.iterdir():
-            if speaker_dir.is_dir() and speaker_dir.name not in ['features', 'raw']:
+            if speaker_dir.is_dir() and speaker_dir.name not in ['features', 'raw', 'cmd_templates']:
                 for audio_file in speaker_dir.glob('*.[mw][4a][av]'):
                     filename = audio_file.stem
                     for cn_cmd, en_cmd in config.COMMAND_MAPPING.items():
                         if cn_cmd in filename:
                             audio = load_audio_file(str(audio_file))
-                            self.add_template(en_cmd, audio)
+                            self.add_template(en_cmd, audio, audio_file.name)
                             print(f"Loaded template: {speaker_dir.name}/{audio_file.name} -> {en_cmd}")
                             break
