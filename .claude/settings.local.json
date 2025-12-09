@@ -7,7 +7,10 @@
       "Bash(python:*)",
       "Bash(C:/Users/user/anaconda3/envs/dspfp/python.exe \"C:/Users/user/Desktop/DSPLAB/Final/check_audio_devices.py\")",
       "Bash(C:/Users/user/anaconda3/envs/dspfp/python.exe \"C:/Users/user/Desktop/DSPLAB/Final/test_live.py\")",
-      "Bash(C:/Users/user/anaconda3/envs/dspfp/python.exe:*)"
+      "Bash(C:/Users/user/anaconda3/envs/dspfp/python.exe:*)",
+      "Bash(C:Usersuserminiconda3condabinmamba.bat --version)",
+      "Bash(cmd /c \"C:\\Users\\user\\miniconda3\\condabin\\conda.bat run -n base mamba --version\")",
+      "Bash(powershell:*)"
     ],
     "deny": [],
     "ask": []

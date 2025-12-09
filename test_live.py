@@ -52,32 +52,8 @@ def test_live_recognition():
 
     # Find suitable audio device or use specified
     print("\n" + "=" * 70)
-    if args.device_index is not None:
-        print(f"Attempting to use specified device index: {args.device_index}")
-        # Need to re-check if this device works and its rate
-        pa = pyaudio.PyAudio()
-        try:
-            info = pa.get_device_info_by_index(args.device_index)
-            if info.get('maxInputChannels', 0) > 0:
-                device_index = args.device_index
-                device_rate = int(info.get("defaultSampleRate", config.SAMPLE_RATE))
-                print(f"  Device '{info['name']}' found.")
-            else:
-                print(f"  Device {args.device_index} has no input channels. Falling back to auto-detect.")
-                args.device_index = None # Fallback
-        except Exception as e:
-            print(f"  Device {args.device_index} not found or invalid: {e}. Falling back to auto-detect.")
-            args.device_index = None # Fallback
-        finally:
-            pa.terminate()
-
-    if args.device_index is None:
-        print("Finding suitable audio device automatically...")
-        device_info = find_suitable_device(config.SAMPLE_RATE, verbose=True)
-    else:
-        # If specified device was valid, use its info
-        device_info = (device_index, device_rate)
-
+    print("Finding suitable audio device...")
+    device_info = find_suitable_device(config.SAMPLE_RATE, verbose=True, preferred_device_index=args.device_index)
 
     if device_info is None:
         print("[ERROR] Cannot access any audio input device!")
@@ -217,7 +193,5 @@ def test_live_recognition():
 
 
 if __name__ == '__main__':
-    # Temp for test_live.py only, remove after this specific fix
-    import pyaudio # Added here for the temp check in main
     test_live_recognition()
 

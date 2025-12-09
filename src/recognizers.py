@@ -1,16 +1,58 @@
-"""Template matching recognizers."""
+"""Template matching recognizers with DTW."""
 
 import numpy as np
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Tuple
 from pathlib import Path
-import os
+from fastdtw import fastdtw
+from scipy.spatial.distance import euclidean
 
-from .. import config
-from ..vad import preprocess_audio
-from ..features import extract_mfcc, extract_stats_features, extract_mel_template, extract_lpc_features
-from ..features.mel_template import mel_distance
-from .dtw import dtw_distance_normalized
+from . import config
+from .vad import preprocess_audio
+from .features import extract_mfcc, extract_stats_features, extract_mel_template, extract_lpc_features, mel_distance
 
+
+# =============================================================================
+# DTW Distance
+# =============================================================================
+
+def dtw_distance(seq1: np.ndarray, seq2: np.ndarray, radius: int = 5) -> float:
+    """
+    Compute DTW distance between two sequences.
+
+    Args:
+        seq1: First sequence (n_frames1, n_features)
+        seq2: Second sequence (n_frames2, n_features)
+        radius: Sakoe-Chiba band radius
+
+    Returns:
+        DTW distance
+    """
+    if len(seq1) == 0 or len(seq2) == 0:
+        return float('inf')
+
+    distance, _ = fastdtw(seq1, seq2, radius=radius, dist=euclidean)
+    return distance
+
+
+def dtw_distance_normalized(seq1: np.ndarray, seq2: np.ndarray, radius: int = 5) -> float:
+    """
+    Compute length-normalized DTW distance.
+
+    Args:
+        seq1, seq2: Feature sequences
+        radius: Sakoe-Chiba band radius
+
+    Returns:
+        Normalized DTW distance
+    """
+    dist = dtw_distance(seq1, seq2, radius)
+    path_length = len(seq1) + len(seq2)
+    return dist / path_length if path_length > 0 else float('inf')
+
+
+# =============================================================================
+# Template Matcher
+# =============================================================================
 
 class TemplateMatcher:
     """Base template matcher for a single method."""
@@ -24,7 +66,6 @@ class TemplateMatcher:
         self.method = method
         self.templates: Dict[str, List[np.ndarray]] = {}
 
-        # Set default thresholds
         if threshold is None:
             threshold_map = {
                 'mfcc_dtw': config.THRESHOLD_MFCC_DTW,
@@ -64,7 +105,6 @@ class TemplateMatcher:
         elif self.method == 'mel':
             return mel_distance(feat1, feat2)
         else:
-            # Euclidean for stats and lpc
             return np.sqrt(np.sum((feat1 - feat2) ** 2))
 
     def recognize(self, audio: np.ndarray) -> Tuple[str, float]:
@@ -94,6 +134,10 @@ class TemplateMatcher:
 
         return (best_command, best_distance)
 
+
+# =============================================================================
+# Multi-Method Matcher
+# =============================================================================
 
 class MultiMethodMatcher:
     """Ensemble matcher using multiple methods."""
@@ -132,14 +176,12 @@ class MultiMethodMatcher:
         if mode == 'all':
             return {'all_results': results}
 
-        # Find best (most confident) result
         best_method = None
         best_command = 'NONE'
         best_confidence = 0
 
         for method, result in results.items():
             if result['command'] != 'NONE':
-                # Confidence = 1 - (distance / threshold)
                 threshold = self.matchers[method].threshold
                 conf = 1 - min(result['distance'] / threshold, 1)
                 if conf > best_confidence:
@@ -166,14 +208,13 @@ class MultiMethodMatcher:
             template_dir/
                 <command><number>.m4a
         """
-        from ..audio_io import load_audio_file
+        from .audio_io import load_audio_file
 
         template_path = Path(template_dir)
 
         # Check for direct files (like 開始1.m4a)
         for audio_file in template_path.glob('*.[mw][4a][av]'):
             filename = audio_file.stem
-            # Parse command from filename
             for cn_cmd, en_cmd in config.COMMAND_MAPPING.items():
                 if filename.startswith(cn_cmd):
                     audio = load_audio_file(str(audio_file))
@@ -186,7 +227,6 @@ class MultiMethodMatcher:
             if speaker_dir.is_dir() and speaker_dir.name not in ['features', 'raw']:
                 for audio_file in speaker_dir.glob('*.[mw][4a][av]'):
                     filename = audio_file.stem
-                    # Parse command from filename
                     for cn_cmd, en_cmd in config.COMMAND_MAPPING.items():
                         if cn_cmd in filename:
                             audio = load_audio_file(str(audio_file))
