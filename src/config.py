@@ -7,7 +7,7 @@ CHUNK_SIZE = 512  # ~32ms at 16kHz
 DTYPE = 'int16'
 
 # VAD settings
-VAD_ENERGY_THRESHOLD_MULT_LOW = 1.5
+VAD_ENERGY_THRESHOLD_MULT_LOW = 2.0
 VAD_ENERGY_THRESHOLD_MULT_HIGH = 5.0
 VAD_MIN_SPEECH_MS = 200
 VAD_MAX_SPEECH_MS = 1500
@@ -32,10 +32,10 @@ TEMPLATE_FIXED_FRAMES = 50  # for mel template resizing
 STATS_SEGMENTS = 3  # number of segments for stats features
 
 # Recognition thresholds (to be tuned)
-THRESHOLD_MFCC_DTW = 150.0  # Increased from 50.0 based on tests (obs: 60-110)
-THRESHOLD_STATS = 400.0     # Increased from 30.0 (obs: 150-370)
-THRESHOLD_MEL = 50.0        # Decreased from 100.0 (obs: 30-35)
-THRESHOLD_LPC = 2.0         # Drastically decreased from 20.0 (obs: 0.3-0.8)
+THRESHOLD_MFCC_DTW = 115.0  # Tuned based on QA: max 108
+THRESHOLD_STATS = 350.0     # Tuned based on QA: max 344
+THRESHOLD_MEL = 45.0        # Tuned based on QA: max 44
+THRESHOLD_LPC = 2.1         # Tuned based on QA: max 1.995
 
 # Command list
 COMMANDS = ['START', 'PAUSE', 'JUMP', 'MAGNET', 'INVERT']

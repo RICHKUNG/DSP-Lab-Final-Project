@@ -4,7 +4,7 @@ import sys
 import os
 import time
 import argparse
-import threading
+import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -12,6 +12,46 @@ from src.audio_io import AudioStream, find_suitable_device
 from src.vad import VAD, VADState
 from src.recognizers import MultiMethodMatcher
 from src import config
+
+
+def collect_noise_samples(audio_stream, duration_ms=2000, num_samples=5):
+    """
+    Collect noise samples from background audio.
+
+    Args:
+        audio_stream: AudioStream instance
+        duration_ms: Total duration to collect
+        num_samples: Number of noise samples to extract
+
+    Returns:
+        List of noise audio segments
+    """
+    samples_needed = int(config.SAMPLE_RATE * duration_ms / 1000)
+    collected = []
+
+    print(f"Collecting {num_samples} noise samples over {duration_ms}ms...")
+
+    while len(collected) < samples_needed:
+        chunk = audio_stream.get_chunk(timeout=0.5)
+        if len(chunk) > 0:
+            collected.extend(chunk)
+
+    audio = np.array(collected[:samples_needed], dtype=np.int16)
+
+    # Split into segments
+    segment_len = len(audio) // num_samples
+    noise_samples = []
+
+    for i in range(num_samples):
+        start = i * segment_len
+        end = start + segment_len
+        segment = audio[start:end]
+        # Only use segments with some energy (not completely silent)
+        rms = np.sqrt(np.mean(segment.astype(np.float32) ** 2))
+        if rms > 10:  # Minimum energy threshold
+            noise_samples.append(segment)
+
+    return noise_samples
 
 
 def test_live_recognition():
@@ -32,6 +72,17 @@ def test_live_recognition():
         type=int,
         default=3,
         help="Show top N closest templates for each method (default: 3)"
+    )
+    parser.add_argument(
+        "--no-noise-templates",
+        action="store_true",
+        help="Disable noise template collection"
+    )
+    parser.add_argument(
+        "--noise-samples",
+        type=int,
+        default=5,
+        help="Number of noise samples to collect (default: 5)"
     )
     args = parser.parse_args()
 
@@ -96,10 +147,29 @@ def test_live_recognition():
     )
     audio_stream.start()
 
-    print("Calibrating background noise (please stay quiet for 1.5 seconds)...")
+    # Calibration phase - collect background RMS AND noise samples
+    print("\n" + "-" * 80)
+    print("Calibration Phase - Please stay QUIET for 3 seconds")
+    print("-" * 80)
     time.sleep(0.3)
+
+    # Measure background RMS
     bg_rms = audio_stream.measure_background(1500)
     print(f"Background RMS: {bg_rms:.1f}")
+
+    # Collect noise samples for rejection
+    if not args.no_noise_templates:
+        noise_samples = collect_noise_samples(audio_stream, duration_ms=2000, num_samples=args.noise_samples)
+        print(f"Collected {len(noise_samples)} noise samples")
+
+        # Add noise samples to matcher
+        for i, noise_audio in enumerate(noise_samples):
+            matcher.add_noise_template(noise_audio)
+            print(f"  Added noise template #{i+1} (len={len(noise_audio)})")
+
+        print(f"Total noise templates: {matcher.get_noise_template_count()}")
+    else:
+        print("Noise template collection disabled")
 
     # Initialize VAD
     vad = VAD(background_rms=bg_rms)
@@ -116,9 +186,11 @@ def test_live_recognition():
         stats = {
             'total_detections': 0,
             'successful_matches': 0,
+            'noise_detections': 0,
             'processing_times': [],
             'per_method_times': {m: [] for m in matcher.matchers.keys()},
             'distances': {m: [] for m in matcher.matchers.keys()},
+            'noise_distances': {m: [] for m in matcher.matchers.keys()},
             'vad_latencies': []
         }
 
@@ -165,15 +237,21 @@ def test_live_recognition():
                 best_confidence = 0.0
                 best_method = None
                 best_template = ''
+                noise_votes = 0
 
                 for method, res in raw_results['all_results'].items():
                     cmd = res['command']
                     dist = res['distance']
+                    noise_dist = res.get('noise_distance', float('inf'))
                     threshold = matcher.matchers[method].threshold
 
                     stats['distances'][method].append(dist)
+                    if noise_dist < float('inf'):
+                        stats['noise_distances'][method].append(noise_dist)
 
-                    if cmd != 'NONE':
+                    if cmd == 'NOISE':
+                        noise_votes += 1
+                    elif cmd not in ('NONE', 'NOISE'):
                         conf = 1 - min(dist / threshold, 1)
                         if conf > best_confidence:
                             best_confidence = conf
@@ -181,23 +259,35 @@ def test_live_recognition():
                             best_method = method
                             best_template = res['best_template']
 
+                # If majority say NOISE, override
+                if noise_votes > len(raw_results['all_results']) // 2:
+                    best_command = 'NOISE'
+
                 # Show detailed results for each method
                 for method, res in raw_results['all_results'].items():
                     cmd = res['command']
                     dist = res['distance']
                     best_tpl = res['best_template']
                     all_dists = res['all_distances']
+                    noise_dist = res.get('noise_distance', float('inf'))
                     threshold = matcher.matchers[method].threshold
 
                     # Calculate margin (how far from threshold)
                     margin = threshold - dist
                     margin_pct = (margin / threshold) * 100
 
-                    status = "MATCH" if cmd != 'NONE' else "NO MATCH"
+                    if cmd == 'NOISE':
+                        status = "NOISE"
+                    elif cmd == 'NONE':
+                        status = "NO MATCH"
+                    else:
+                        status = "MATCH"
                     conf_pct = max(0, (1 - dist / threshold) * 100)
 
                     print(f"\n[{method}] {status}")
                     print(f"  Best match: {best_tpl} (dist={dist:.3f}, conf={conf_pct:.1f}%)")
+                    if noise_dist < float('inf'):
+                        print(f"  Noise dist: {noise_dist:.3f} {'<-- CLOSER' if noise_dist < dist else ''}")
                     print(f"  Threshold: {threshold:.2f} | Margin: {margin:.2f} ({margin_pct:+.1f}%)")
 
                     # Show top N closest templates
@@ -210,7 +300,10 @@ def test_live_recognition():
                 # Show final decision
                 print()
                 print("-" * 80)
-                if best_command != 'NONE':
+                if best_command == 'NOISE':
+                    stats['noise_detections'] += 1
+                    print(f">>> DECISION: NOISE (rejected - closer to noise templates)")
+                elif best_command != 'NONE':
                     stats['successful_matches'] += 1
                     print(f">>> DECISION: {best_command} (by {best_method}, conf={best_confidence*100:.1f}%, template={best_template})")
                 else:
@@ -236,9 +329,13 @@ def test_live_recognition():
     print(f"\n[Overall]")
     print(f"  Total detections: {stats['total_detections']}")
     print(f"  Successful matches: {stats['successful_matches']}")
+    print(f"  Noise rejections: {stats['noise_detections']}")
+    print(f"  No match: {stats['total_detections'] - stats['successful_matches'] - stats['noise_detections']}")
     if stats['total_detections'] > 0:
-        accuracy = stats['successful_matches'] / stats['total_detections'] * 100
-        print(f"  Match rate: {accuracy:.1f}%")
+        match_rate = stats['successful_matches'] / stats['total_detections'] * 100
+        noise_rate = stats['noise_detections'] / stats['total_detections'] * 100
+        print(f"  Match rate: {match_rate:.1f}%")
+        print(f"  Noise rejection rate: {noise_rate:.1f}%")
 
     if stats['processing_times']:
         print(f"\n[Processing Time]")
@@ -258,19 +355,25 @@ def test_live_recognition():
     print(f"\n[Distance Statistics per Method (for threshold tuning)]")
     for method in matcher.matchers.keys():
         dists = stats['distances'].get(method, [])
+        noise_dists = stats['noise_distances'].get(method, [])
         if dists:
             threshold = matcher.matchers[method].threshold
             print(f"\n  {method}:")
             print(f"    Current threshold: {threshold:.2f}")
-            print(f"    Observed distances:")
+            print(f"    Command distances:")
             print(f"      Min: {min(dists):.3f}")
             print(f"      Max: {max(dists):.3f}")
             print(f"      Avg: {sum(dists)/len(dists):.3f}")
+            if noise_dists:
+                print(f"    Noise distances:")
+                print(f"      Min: {min(noise_dists):.3f}")
+                print(f"      Max: {max(noise_dists):.3f}")
+                print(f"      Avg: {sum(noise_dists)/len(noise_dists):.3f}")
             # Suggest threshold if needed
             if min(dists) > threshold:
-                print(f"    ⚠ Suggestion: Increase threshold (all dists > current threshold)")
+                print(f"    Suggestion: Increase threshold (all dists > current threshold)")
             elif max(dists) < threshold * 0.5:
-                print(f"    ⚠ Suggestion: Could decrease threshold (all dists < 50% of threshold)")
+                print(f"    Suggestion: Could decrease threshold (all dists < 50% of threshold)")
 
     print("\n" + "=" * 80)
 

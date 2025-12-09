@@ -66,6 +66,7 @@ class TemplateMatcher:
         self.method = method
         self.templates: Dict[str, List[np.ndarray]] = {}
         self.template_names: Dict[str, List[str]] = {}  # Track template filenames
+        self.noise_templates: List[np.ndarray] = []  # Noise templates for rejection
 
         if threshold is None:
             threshold_map = {
@@ -101,6 +102,11 @@ class TemplateMatcher:
         self.templates[command].append(features)
         self.template_names[command].append(filename or "unknown")
 
+    def add_noise_template(self, audio: np.ndarray):
+        """Add a noise template for rejection."""
+        features = self._extract_features(audio)
+        self.noise_templates.append(features)
+
     def _compute_distance(self, feat1: np.ndarray, feat2: np.ndarray) -> float:
         """Compute distance between features."""
         if self.method == 'mfcc_dtw':
@@ -110,16 +116,17 @@ class TemplateMatcher:
         else:
             return np.sqrt(np.sum((feat1 - feat2) ** 2))
 
-    def recognize(self, audio: np.ndarray) -> Tuple[str, float, str, List[Tuple[str, str, float]]]:
+    def recognize(self, audio: np.ndarray) -> Tuple[str, float, str, List[Tuple[str, str, float]], float]:
         """
         Recognize command from audio.
 
         Returns:
-            (command, distance, best_template_name, all_distances)
+            (command, distance, best_template_name, all_distances, noise_distance)
             all_distances: List of (command, template_name, distance) sorted by distance
+            noise_distance: Distance to closest noise template (inf if no noise templates)
         """
         if not self.templates:
-            return ('NONE', float('inf'), '', [])
+            return ('NONE', float('inf'), '', [], float('inf'))
 
         features = self._extract_features(audio)
 
@@ -138,13 +145,26 @@ class TemplateMatcher:
                     best_command = command
                     best_template = tpl_name
 
+        # Compute noise distance
+        noise_distance = float('inf')
+        if self.noise_templates:
+            for noise_feat in self.noise_templates:
+                dist = self._compute_distance(features, noise_feat)
+                if dist < noise_distance:
+                    noise_distance = dist
+
         # Sort by distance
         all_distances.sort(key=lambda x: x[2])
 
-        if best_distance > self.threshold:
-            return ('NONE', best_distance, best_template, all_distances)
+        # Check if noise is closer than best command match
+        # If input is closer to noise than to any command, return NOISE
+        if noise_distance < best_distance:
+            return ('NOISE', noise_distance, 'noise_template', all_distances, noise_distance)
 
-        return (best_command, best_distance, best_template, all_distances)
+        if best_distance > self.threshold:
+            return ('NONE', best_distance, best_template, all_distances, noise_distance)
+
+        return (best_command, best_distance, best_template, all_distances, noise_distance)
 
 
 # =============================================================================
@@ -169,6 +189,18 @@ class MultiMethodMatcher:
         for matcher in self.matchers.values():
             matcher.add_template(command, audio, filename)
 
+    def add_noise_template(self, audio: np.ndarray):
+        """Add noise template to all matchers."""
+        for matcher in self.matchers.values():
+            matcher.add_noise_template(audio)
+
+    def get_noise_template_count(self) -> int:
+        """Get number of noise templates."""
+        # All matchers have the same count, just return from first
+        for matcher in self.matchers.values():
+            return len(matcher.noise_templates)
+        return 0
+
     def recognize(self, audio: np.ndarray, mode: str = 'best') -> Dict:
         """
         Recognize using all methods.
@@ -182,12 +214,13 @@ class MultiMethodMatcher:
         """
         results = {}
         for method, matcher in self.matchers.items():
-            cmd, dist, best_tpl, all_dists = matcher.recognize(audio)
+            cmd, dist, best_tpl, all_dists, noise_dist = matcher.recognize(audio)
             results[method] = {
                 'command': cmd,
                 'distance': dist,
                 'best_template': best_tpl,
-                'all_distances': all_dists
+                'all_distances': all_dists,
+                'noise_distance': noise_dist
             }
 
         if mode == 'all':
@@ -198,8 +231,11 @@ class MultiMethodMatcher:
         best_confidence = 0
         best_template = ''
 
+        # Count how many methods say NOISE
+        noise_votes = sum(1 for r in results.values() if r['command'] == 'NOISE')
+
         for method, result in results.items():
-            if result['command'] != 'NONE':
+            if result['command'] not in ('NONE', 'NOISE'):
                 threshold = self.matchers[method].threshold
                 conf = 1 - min(result['distance'] / threshold, 1)
                 if conf > best_confidence:
@@ -207,6 +243,10 @@ class MultiMethodMatcher:
                     best_command = result['command']
                     best_method = method
                     best_template = result['best_template']
+
+        # If majority of methods say NOISE, override to NOISE
+        if noise_votes > len(results) // 2 and best_command == 'NONE':
+            best_command = 'NOISE'
 
         return {
             'command': best_command,
@@ -237,6 +277,14 @@ class MultiMethodMatcher:
         if cmd_templates_path.exists():
             for audio_file in cmd_templates_path.glob('*.[mw][4a][av]'):
                 filename = audio_file.stem
+                
+                # Check for noise
+                if 'noise' in filename.lower() or '噪音' in filename:
+                    audio = load_audio_file(str(audio_file))
+                    self.add_noise_template(audio)
+                    print(f"Loaded noise template: {audio_file.name}")
+                    continue
+
                 for cn_cmd, en_cmd in config.COMMAND_MAPPING.items():
                     if filename.startswith(cn_cmd):
                         audio = load_audio_file(str(audio_file))
@@ -247,6 +295,14 @@ class MultiMethodMatcher:
         # Check for direct files (like 開始1.m4a)
         for audio_file in template_path.glob('*.[mw][4a][av]'):
             filename = audio_file.stem
+            
+            # Check for noise
+            if 'noise' in filename.lower() or '噪音' in filename:
+                audio = load_audio_file(str(audio_file))
+                self.add_noise_template(audio)
+                print(f"Loaded noise template: {audio_file.name}")
+                continue
+
             for cn_cmd, en_cmd in config.COMMAND_MAPPING.items():
                 if filename.startswith(cn_cmd):
                     audio = load_audio_file(str(audio_file))
@@ -254,11 +310,27 @@ class MultiMethodMatcher:
                     print(f"Loaded template: {audio_file.name} -> {en_cmd}")
                     break
 
+        # Check for noise directory
+        noise_dir = template_path / 'noise'
+        if noise_dir.exists() and noise_dir.is_dir():
+             for audio_file in noise_dir.glob('*.[mw][4a][av]'):
+                audio = load_audio_file(str(audio_file))
+                self.add_noise_template(audio)
+                print(f"Loaded noise template: {noise_dir.name}/{audio_file.name}")
+
         # Check for speaker subdirectories
         for speaker_dir in template_path.iterdir():
-            if speaker_dir.is_dir() and speaker_dir.name not in ['features', 'raw', 'cmd_templates']:
+            if speaker_dir.is_dir() and speaker_dir.name not in ['features', 'raw', 'cmd_templates', 'noise', 'record', 'src', 'temp', '__pycache__', '.git']:
                 for audio_file in speaker_dir.glob('*.[mw][4a][av]'):
                     filename = audio_file.stem
+                    
+                    # Check for noise
+                    if 'noise' in filename.lower() or '噪音' in filename:
+                        audio = load_audio_file(str(audio_file))
+                        self.add_noise_template(audio)
+                        print(f"Loaded noise template: {speaker_dir.name}/{audio_file.name}")
+                        continue
+
                     for cn_cmd, en_cmd in config.COMMAND_MAPPING.items():
                         if cn_cmd in filename:
                             audio = load_audio_file(str(audio_file))

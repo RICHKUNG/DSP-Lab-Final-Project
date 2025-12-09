@@ -4,6 +4,7 @@ import sys
 import os
 import time
 import argparse
+import numpy as np
 from datetime import datetime
 from collections import defaultdict
 
@@ -36,6 +37,46 @@ LABEL_DISPLAY = {
 }
 
 
+def collect_noise_samples(audio_stream, duration_ms=2000, num_samples=5):
+    """
+    Collect noise samples from background audio.
+
+    Args:
+        audio_stream: AudioStream instance
+        duration_ms: Total duration to collect
+        num_samples: Number of noise samples to extract
+
+    Returns:
+        List of noise audio segments
+    """
+    samples_needed = int(config.SAMPLE_RATE * duration_ms / 1000)
+    collected = []
+
+    print(f"Collecting {num_samples} noise samples over {duration_ms}ms...")
+
+    while len(collected) < samples_needed:
+        chunk = audio_stream.get_chunk(timeout=0.5)
+        if len(chunk) > 0:
+            collected.extend(chunk)
+
+    audio = np.array(collected[:samples_needed], dtype=np.int16)
+
+    # Split into segments
+    segment_len = len(audio) // num_samples
+    noise_samples = []
+
+    for i in range(num_samples):
+        start = i * segment_len
+        end = start + segment_len
+        segment = audio[start:end]
+        # Only use segments with some energy (not completely silent)
+        rms = np.sqrt(np.mean(segment.astype(np.float32) ** 2))
+        if rms > 10:  # Minimum energy threshold
+            noise_samples.append(segment)
+
+    return noise_samples
+
+
 def get_user_label():
     """Get ground truth label from user."""
     while True:
@@ -62,8 +103,9 @@ def generate_report(stats, matcher, output_path):
         # Overall summary
         f.write("## Overall Summary\n\n")
         f.write(f"- **Total samples:** {stats['total']}\n")
-        f.write(f"- **Noise samples (excluded):** {stats['noise_count']}\n")
-        f.write(f"- **Valid samples:** {stats['total'] - stats['noise_count']}\n\n")
+        f.write(f"- **Noise samples (ground truth):** {stats['noise_count']}\n")
+        f.write(f"- **Valid command samples:** {stats['total'] - stats['noise_count']}\n")
+        f.write(f"- **Noise templates used:** {matcher.get_noise_template_count()}\n\n")
 
         # Thresholds
         f.write("## Current Thresholds\n\n")
@@ -86,15 +128,23 @@ def generate_report(stats, matcher, output_path):
             else:
                 accuracy = 0
 
+            # Noise rejection accuracy
+            if stats['noise_count'] > 0:
+                noise_rejected = method_stats['noise_correctly_rejected']
+                noise_acc = noise_rejected / stats['noise_count'] * 100
+            else:
+                noise_acc = 0
+
             f.write(f"### {method}\n\n")
-            f.write(f"- **Accuracy:** {accuracy:.1f}% ({method_stats['correct']}/{valid_total})\n")
+            f.write(f"- **Command Accuracy:** {accuracy:.1f}% ({method_stats['correct']}/{valid_total})\n")
+            f.write(f"- **Noise Rejection Accuracy:** {noise_acc:.1f}% ({method_stats.get('noise_correctly_rejected', 0)}/{stats['noise_count']})\n")
             f.write(f"- **False Positives (NOISE detected as command):** {method_stats['false_positive']}\n")
-            f.write(f"- **False Negatives (Command detected as NONE):** {method_stats['false_negative']}\n")
+            f.write(f"- **False Negatives (Command detected as NONE/NOISE):** {method_stats['false_negative']}\n")
             f.write(f"- **Misclassifications:** {method_stats['misclassified']}\n\n")
 
             # Confusion matrix
             f.write("#### Confusion Matrix\n\n")
-            labels = ['START', 'JUMP', 'PAUSE', 'NONE']
+            labels = ['START', 'JUMP', 'PAUSE', 'NONE', 'NOISE']
             cm = method_stats['confusion']
 
             f.write("| Actual \\ Predicted |")
@@ -118,24 +168,31 @@ def generate_report(stats, matcher, output_path):
             # Distance statistics
             f.write("#### Distance Statistics\n\n")
             dists = method_stats['distances']
-            if dists:
-                f.write(f"- **Min:** {min(dists):.3f}\n")
-                f.write(f"- **Max:** {max(dists):.3f}\n")
-                f.write(f"- **Avg:** {sum(dists)/len(dists):.3f}\n\n")
+            noise_dists = method_stats.get('noise_distances', [])
 
-                # Per-label distance stats
-                f.write("##### Distance by Ground Truth Label\n\n")
-                f.write("| Label | Count | Min | Max | Avg |\n")
-                f.write("|-------|------:|----:|----:|----:|\n")
-                for label in ['START', 'JUMP', 'PAUSE', 'NOISE']:
-                    label_dists = method_stats['distances_by_label'].get(label, [])
-                    if label_dists:
-                        f.write(f"| {label} | {len(label_dists)} | {min(label_dists):.3f} | {max(label_dists):.3f} | {sum(label_dists)/len(label_dists):.3f} |\n")
-                    else:
-                        f.write(f"| {label} | 0 | - | - | - |\n")
-                f.write("\n")
-            else:
-                f.write("No distance data collected.\n\n")
+            if dists:
+                f.write(f"**Command Distances:**\n")
+                f.write(f"- Min: {min(dists):.3f}\n")
+                f.write(f"- Max: {max(dists):.3f}\n")
+                f.write(f"- Avg: {sum(dists)/len(dists):.3f}\n\n")
+
+            if noise_dists:
+                f.write(f"**Noise Template Distances:**\n")
+                f.write(f"- Min: {min(noise_dists):.3f}\n")
+                f.write(f"- Max: {max(noise_dists):.3f}\n")
+                f.write(f"- Avg: {sum(noise_dists)/len(noise_dists):.3f}\n\n")
+
+            # Per-label distance stats
+            f.write("##### Distance by Ground Truth Label\n\n")
+            f.write("| Label | Count | Min | Max | Avg |\n")
+            f.write("|-------|------:|----:|----:|----:|\n")
+            for label in ['START', 'JUMP', 'PAUSE', 'NOISE']:
+                label_dists = method_stats['distances_by_label'].get(label, [])
+                if label_dists:
+                    f.write(f"| {label} | {len(label_dists)} | {min(label_dists):.3f} | {max(label_dists):.3f} | {sum(label_dists)/len(label_dists):.3f} |\n")
+                else:
+                    f.write(f"| {label} | 0 | - | - | - |\n")
+            f.write("\n")
 
         # Ensemble results
         f.write("## Ensemble Decision Results\n\n")
@@ -145,14 +202,20 @@ def generate_report(stats, matcher, output_path):
         else:
             ensemble_acc = 0
 
-        f.write(f"- **Accuracy:** {ensemble_acc:.1f}% ({stats['ensemble']['correct']}/{valid_total})\n")
+        if stats['noise_count'] > 0:
+            ens_noise_acc = stats['ensemble'].get('noise_correctly_rejected', 0) / stats['noise_count'] * 100
+        else:
+            ens_noise_acc = 0
+
+        f.write(f"- **Command Accuracy:** {ensemble_acc:.1f}% ({stats['ensemble']['correct']}/{valid_total})\n")
+        f.write(f"- **Noise Rejection Accuracy:** {ens_noise_acc:.1f}% ({stats['ensemble'].get('noise_correctly_rejected', 0)}/{stats['noise_count']})\n")
         f.write(f"- **False Positives:** {stats['ensemble']['false_positive']}\n")
         f.write(f"- **False Negatives:** {stats['ensemble']['false_negative']}\n")
         f.write(f"- **Misclassifications:** {stats['ensemble']['misclassified']}\n\n")
 
         # Confusion matrix for ensemble
         f.write("### Ensemble Confusion Matrix\n\n")
-        labels = ['START', 'JUMP', 'PAUSE', 'NONE']
+        labels = ['START', 'JUMP', 'PAUSE', 'NONE', 'NOISE']
         cm = stats['ensemble']['confusion']
 
         f.write("| Actual \\ Predicted |")
@@ -195,18 +258,26 @@ def generate_report(stats, matcher, output_path):
         for i, record in enumerate(stats['records'], 1):
             gt = record['ground_truth']
             ensemble = record['ensemble']
-            ensemble_mark = "O" if ensemble == gt or (gt == 'NOISE' and ensemble == 'NONE') else "X"
+
+            # For NOISE ground truth: NONE or NOISE prediction is correct
+            if gt == 'NOISE':
+                ensemble_mark = "O" if ensemble in ('NONE', 'NOISE') else "X"
+            else:
+                ensemble_mark = "O" if ensemble == gt else "X"
 
             row = f"| {i} | {gt} | {ensemble} {ensemble_mark} |"
             for method in methods:
                 pred = record['predictions'][method]
-                mark = "O" if pred == gt or (gt == 'NOISE' and pred == 'NONE') else "X"
+                if gt == 'NOISE':
+                    mark = "O" if pred in ('NONE', 'NOISE') else "X"
+                else:
+                    mark = "O" if pred == gt else "X"
                 row += f" {pred} {mark} |"
             f.write(row + "\n")
 
         f.write("\n---\n")
         f.write("*O = Correct, X = Incorrect*\n")
-        f.write("*NOISE samples: NONE prediction is considered correct*\n")
+        f.write("*NOISE samples: NONE or NOISE prediction is considered correct*\n")
 
 
 def test_qa():
@@ -221,6 +292,17 @@ def test_qa():
         "--device-index",
         type=int,
         help="Specify the input audio device index to use."
+    )
+    parser.add_argument(
+        "--no-noise-templates",
+        action="store_true",
+        help="Disable noise template collection"
+    )
+    parser.add_argument(
+        "--noise-samples",
+        type=int,
+        default=5,
+        help="Number of noise samples to collect (default: 5)"
     )
     args = parser.parse_args()
 
@@ -273,10 +355,28 @@ def test_qa():
     )
     audio_stream.start()
 
-    print("Calibrating background noise (please stay quiet for 1.5 seconds)...")
+    # Calibration phase
+    print("\n" + "-" * 80)
+    print("Calibration Phase - Please stay QUIET for 3 seconds")
+    print("-" * 80)
     time.sleep(0.3)
+
+    # Measure background RMS
     bg_rms = audio_stream.measure_background(1500)
     print(f"Background RMS: {bg_rms:.1f}")
+
+    # Collect noise samples for rejection
+    if not args.no_noise_templates:
+        noise_samples = collect_noise_samples(audio_stream, duration_ms=2000, num_samples=args.noise_samples)
+        print(f"Collected {len(noise_samples)} noise samples")
+
+        for i, noise_audio in enumerate(noise_samples):
+            matcher.add_noise_template(noise_audio)
+            print(f"  Added noise template #{i+1} (len={len(noise_audio)})")
+
+        print(f"Total noise templates: {matcher.get_noise_template_count()}")
+    else:
+        print("Noise template collection disabled")
 
     # Initialize VAD
     vad = VAD(background_rms=bg_rms)
@@ -302,8 +402,10 @@ def test_qa():
                 'false_positive': 0,
                 'false_negative': 0,
                 'misclassified': 0,
+                'noise_correctly_rejected': 0,
                 'confusion': defaultdict(int),
                 'distances': [],
+                'noise_distances': [],
                 'distances_by_label': defaultdict(list),
             } for m in methods
         },
@@ -312,6 +414,7 @@ def test_qa():
             'false_positive': 0,
             'false_negative': 0,
             'misclassified': 0,
+            'noise_correctly_rejected': 0,
             'confusion': defaultdict(int),
         }
     }
@@ -356,6 +459,7 @@ def test_qa():
                 best_command = 'NONE'
                 best_confidence = 0.0
                 best_method = None
+                noise_votes = 0
 
                 predictions = {}
                 for method, res in raw_results['all_results'].items():
@@ -364,12 +468,18 @@ def test_qa():
                     threshold = matcher.matchers[method].threshold
                     predictions[method] = cmd
 
-                    if cmd != 'NONE':
+                    if cmd == 'NOISE':
+                        noise_votes += 1
+                    elif cmd not in ('NONE', 'NOISE'):
                         conf = 1 - min(dist / threshold, 1)
                         if conf > best_confidence:
                             best_confidence = conf
                             best_command = cmd
                             best_method = method
+
+                # If majority say NOISE, override
+                if noise_votes > len(raw_results['all_results']) // 2:
+                    best_command = 'NOISE'
 
                 # Show results
                 print(f"\nPredictions:")
@@ -377,9 +487,17 @@ def test_qa():
                     cmd = res['command']
                     dist = res['distance']
                     best_tpl = res['best_template']
+                    noise_dist = res.get('noise_distance', float('inf'))
                     threshold = matcher.matchers[method].threshold
                     conf_pct = max(0, (1 - dist / threshold) * 100)
-                    print(f"  {method:12s}: {cmd:8s} (dist={dist:.3f}, conf={conf_pct:.1f}%, tpl={best_tpl})")
+
+                    noise_info = ""
+                    if noise_dist < float('inf'):
+                        noise_info = f", noise_dist={noise_dist:.3f}"
+                        if noise_dist < dist:
+                            noise_info += " <CLOSER"
+
+                    print(f"  {method:12s}: {cmd:8s} (dist={dist:.3f}, conf={conf_pct:.1f}%{noise_info}, tpl={best_tpl})")
 
                 print(f"\n>>> ENSEMBLE: {best_command}", end="")
                 if best_method:
@@ -407,21 +525,23 @@ def test_qa():
                 # Update statistics
                 if ground_truth == 'NOISE':
                     stats['noise_count'] += 1
-                    # For NOISE, NONE is correct
+                    # For NOISE, NONE or NOISE prediction is correct
                     for method, pred in predictions.items():
                         res = raw_results['all_results'][method]
                         stats['per_method'][method]['distances'].append(res['distance'])
+                        if res.get('noise_distance', float('inf')) < float('inf'):
+                            stats['per_method'][method]['noise_distances'].append(res['noise_distance'])
                         stats['per_method'][method]['distances_by_label']['NOISE'].append(res['distance'])
                         stats['per_method'][method]['confusion'][('NOISE', pred)] += 1
 
-                        if pred == 'NONE':
-                            stats['per_method'][method]['correct'] += 1
+                        if pred in ('NONE', 'NOISE'):
+                            stats['per_method'][method]['noise_correctly_rejected'] += 1
                         else:
                             stats['per_method'][method]['false_positive'] += 1
 
                     stats['ensemble']['confusion'][('NOISE', best_command)] += 1
-                    if best_command == 'NONE':
-                        stats['ensemble']['correct'] += 1
+                    if best_command in ('NONE', 'NOISE'):
+                        stats['ensemble']['noise_correctly_rejected'] += 1
                     else:
                         stats['ensemble']['false_positive'] += 1
                 else:
@@ -429,12 +549,14 @@ def test_qa():
                     for method, pred in predictions.items():
                         res = raw_results['all_results'][method]
                         stats['per_method'][method]['distances'].append(res['distance'])
+                        if res.get('noise_distance', float('inf')) < float('inf'):
+                            stats['per_method'][method]['noise_distances'].append(res['noise_distance'])
                         stats['per_method'][method]['distances_by_label'][ground_truth].append(res['distance'])
                         stats['per_method'][method]['confusion'][(ground_truth, pred)] += 1
 
                         if pred == ground_truth:
                             stats['per_method'][method]['correct'] += 1
-                        elif pred == 'NONE':
+                        elif pred in ('NONE', 'NOISE'):
                             stats['per_method'][method]['false_negative'] += 1
                         else:
                             stats['per_method'][method]['misclassified'] += 1
@@ -442,7 +564,7 @@ def test_qa():
                     stats['ensemble']['confusion'][(ground_truth, best_command)] += 1
                     if best_command == ground_truth:
                         stats['ensemble']['correct'] += 1
-                    elif best_command == 'NONE':
+                    elif best_command in ('NONE', 'NOISE'):
                         stats['ensemble']['false_negative'] += 1
                     else:
                         stats['ensemble']['misclassified'] += 1
@@ -451,7 +573,10 @@ def test_qa():
                 valid = stats['total'] - stats['noise_count']
                 if valid > 0:
                     ens_acc = stats['ensemble']['correct'] / valid * 100
-                    print(f"\n[Running] Ensemble accuracy: {ens_acc:.1f}% ({stats['ensemble']['correct']}/{valid})")
+                    print(f"\n[Running] Command accuracy: {ens_acc:.1f}% ({stats['ensemble']['correct']}/{valid})")
+                if stats['noise_count'] > 0:
+                    noise_rej = stats['ensemble'].get('noise_correctly_rejected', 0) / stats['noise_count'] * 100
+                    print(f"[Running] Noise rejection: {noise_rej:.1f}% ({stats['ensemble'].get('noise_correctly_rejected', 0)}/{stats['noise_count']})")
 
                 print("=" * 80)
                 print()
@@ -486,11 +611,18 @@ def test_qa():
         print(f"Noise samples: {stats['noise_count']}")
         valid = stats['total'] - stats['noise_count']
         if valid > 0:
-            print(f"\nAccuracy (on {valid} valid samples):")
+            print(f"\nCommand Accuracy (on {valid} valid samples):")
             for method in methods:
                 acc = stats['per_method'][method]['correct'] / valid * 100
                 print(f"  {method:12s}: {acc:.1f}%")
             ens_acc = stats['ensemble']['correct'] / valid * 100
+            print(f"  {'ENSEMBLE':12s}: {ens_acc:.1f}%")
+        if stats['noise_count'] > 0:
+            print(f"\nNoise Rejection Accuracy (on {stats['noise_count']} noise samples):")
+            for method in methods:
+                acc = stats['per_method'][method].get('noise_correctly_rejected', 0) / stats['noise_count'] * 100
+                print(f"  {method:12s}: {acc:.1f}%")
+            ens_acc = stats['ensemble'].get('noise_correctly_rejected', 0) / stats['noise_count'] * 100
             print(f"  {'ENSEMBLE':12s}: {ens_acc:.1f}%")
         print("=" * 80)
     else:
