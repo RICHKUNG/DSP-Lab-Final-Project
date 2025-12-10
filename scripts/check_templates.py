@@ -2,6 +2,13 @@
 import json
 import glob
 import os
+import sys
+# Ensure the project root is in the Python path for module imports
+_current_dir = os.path.dirname(os.path.abspath(__file__))
+_project_root = os.path.dirname(_current_dir)
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
+
 
 base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 record_dir = os.path.join(base_dir, "record")

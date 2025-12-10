@@ -6,7 +6,11 @@ import time
 import argparse
 import numpy as np
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# Ensure the project root is in the Python path for module imports
+_current_dir = os.path.dirname(os.path.abspath(__file__))
+_project_root = os.path.dirname(_current_dir)
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
 
 from src.audio_io import AudioStream, find_suitable_device
 from src.vad import VAD, VADState
@@ -86,15 +90,23 @@ def test_live_recognition():
     parser.add_argument(
         "--method",
         type=str,
-        choices=['mfcc_dtw', 'ensemble'],
-        default='ensemble',
-        help="Recognition method: 'mfcc_dtw' (fast, single method) or 'ensemble' (slower, more accurate)"
+        choices=['mfcc_dtw', 'ensemble', 'adaptive_ensemble'],
+        default='adaptive_ensemble',
+        help="Recognition method: 'mfcc_dtw', 'ensemble' (fixed), or 'adaptive_ensemble' (SNR-based)"
     )
     args = parser.parse_args()
 
     # Load templates
     base_dir = os.path.dirname(os.path.abspath(__file__))
-    matcher = MultiMethodMatcher()
+    
+    # Configure matcher based on method
+    if args.method == 'mfcc_dtw':
+        methods = ['mfcc_dtw']
+    else:
+        # Both ensemble and adaptive_ensemble use all methods
+        methods = ['mfcc_dtw', 'mel', 'lpc']
+        
+    matcher = MultiMethodMatcher(methods=methods)
 
     print("\nLoading templates...")
     matcher.load_templates_from_dir(base_dir)
@@ -226,11 +238,15 @@ def test_live_recognition():
                 total_start = time.time()
                 if args.method == 'mfcc_dtw':
                     # Use only MFCC+DTW method
-                    results = matcher.recognize(segment, mode='all')
+                    results = matcher.recognize(segment, mode='all', adaptive=False)
                     command = results['all_results']['mfcc_dtw']['command']
+                elif args.method == 'ensemble':
+                    # Use standard ensemble (fixed weights)
+                    results = matcher.recognize(segment, mode='ensemble', adaptive=False)
+                    command = results['command']
                 else:
-                    # Use ensemble
-                    results = matcher.recognize(segment, mode='ensemble')
+                    # Use adaptive ensemble (SNR-based)
+                    results = matcher.recognize(segment, mode='ensemble', adaptive=True)
                     command = results['command']
                 total_proc_time = (time.time() - total_start) * 1000
                 stats['processing_times'].append(total_proc_time)

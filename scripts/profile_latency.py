@@ -10,7 +10,14 @@ from src.audio_io import load_audio_file
 from src.recognizers import MultiMethodMatcher
 from src.vad import preprocess_audio
 from src.features import extract_mfcc, extract_mel_template, extract_lpc_features
-from src import config
+from src import
+
+# Ensure the project root is in the Python path for module imports
+_current_dir = os.path.dirname(os.path.abspath(__file__))
+_project_root = os.path.dirname(_current_dir)
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
+ config
 
 base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 template_dir = os.path.join(base_dir, "cmd_templates")

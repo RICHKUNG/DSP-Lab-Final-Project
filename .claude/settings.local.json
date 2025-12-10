@@ -22,7 +22,8 @@
       "Bash(ls:*)",
       "Bash(C:Usersuseranaconda3envsdspfppython.exe test_arena.py)",
       "Bash(/c/Users/user/anaconda3/envs/dspfp/python.exe test_arena.py)",
-      "Bash(/c/Users/user/anaconda3/envs/dspfp/python.exe:*)"
+      "Bash(/c/Users/user/anaconda3/envs/dspfp/python.exe:*)",
+      "Bash(wc:*)"
     ],
     "deny": [],
     "ask": []

@@ -1,8 +1,18 @@
+import sys
 import os
+
+# Ensure the project root is in the Python path for module imports
+_current_dir = os.path.dirname(os.path.abspath(__file__))
+_project_root = os.path.dirname(_current_dir)
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
+
 import time
 import soundfile as sf
+import numpy as np
 from src.audio_io import AudioStream, find_suitable_device
 from src import config
+
 
 def record_garbage():
     print("="*60)
@@ -53,7 +63,6 @@ def record_garbage():
                     frames.extend(chunk)
             
             # Save
-            import numpy as np
             audio_data = np.array(frames, dtype=np.int16)
             sf.write(filepath, audio_data, config.SAMPLE_RATE)
             print(f"   Saved: {filepath}")

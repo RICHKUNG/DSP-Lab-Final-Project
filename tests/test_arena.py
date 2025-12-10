@@ -23,7 +23,15 @@ from typing import Dict, List, Tuple, Optional
 from collections import defaultdict
 
 # Ensure src is in path
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+# Ensure the project root is in the Python path for module imports
+_current_dir = os.path.dirname(os.path.abspath(__file__))
+_project_root = os.path.dirname(_current_dir)
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
+
+# Local imports after path is configured
+from tests.template_utils import locate_cmd_templates
 
 try:
     from src.audio_io import load_audio_file
@@ -331,8 +339,7 @@ def run_arena(mode: str = 'all'):
     print(f"   Time: {timestamp}")
     print("=" * 70)
 
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    template_dir = os.path.join(base_dir, "cmd_templates")
+    template_dir = locate_cmd_templates()
 
     # 1. Gather all template files
     all_files = sorted(glob.glob(os.path.join(template_dir, "*.*")))

@@ -1,6 +1,13 @@
 import os
 import shutil
 import glob
+import sys
+# Ensure the project root is in the Python path for module imports
+_current_dir = os.path.dirname(os.path.abspath(__file__))
+_project_root = os.path.dirname(_current_dir)
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
+
 
 def swap_templates():
     template_dir = 'cmd_templates'

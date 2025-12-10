@@ -10,6 +10,7 @@ from scipy.ndimage import zoom
 from . import config
 from .vad import preprocess_audio
 from .features import extract_mfcc, extract_stats_features, extract_mel_template, extract_lpc_features, mel_distance
+from .template_loader import load_templates_from_dir as _load_templates_from_dir
 
 
 # =============================================================================
@@ -403,14 +404,14 @@ class MultiMethodMatcher:
             }
 
         command_scores = {}
-        total_weight = 0
+        total_weight = 0.0
 
         for method, result in results.items():
             cmd = result['command']
             weight = weights.get(method, 1.0)
             
             # Confidence calculation
-            threshold = self.matchers[method].threshold
+            threshold = getattr(self.matchers.get(method), 'threshold', 1.0)
             # If distance > threshold (NONE), confidence is 0
             # If NOISE, confidence is based on how much closer it is to noise than command?
             # For simplicity, if cmd is valid, conf = 1 - dist/thresh
@@ -430,7 +431,8 @@ class MultiMethodMatcher:
                 command_scores[vote_cmd] = 0.0
             
             command_scores[vote_cmd] += weight * conf
-            total_weight += weight
+            if weight > 0:
+                total_weight += weight
 
         # Special Veto Rule: 
         # If Mel says NOISE, we lean heavily towards NOISE unless MFCC is VERY confident
@@ -459,7 +461,7 @@ class MultiMethodMatcher:
 
         # Fallback for method reporting
         best_method = 'ensemble' 
-        best_confidence = max_score / sum(weights.values()) # Approximate normalized confidence
+        best_confidence = max_score / total_weight if total_weight > 0 else 0.0 # Approximate normalized confidence
         best_template = ''
         
         # Try to find the template from the method that voted for the winner with highest weight
@@ -489,6 +491,15 @@ class MultiMethodMatcher:
         
         return response
 
+    def load_templates_from_dir(self, template_dir: str):
+        """Delegate to shared template loader."""
+        _load_templates_from_dir(
+            template_dir=template_dir,
+            add_template=self.add_template,
+            add_noise=self.add_noise_template,
+            command_mapping=config.COMMAND_MAPPING,
+        )
+
 def get_adaptive_weights(snr_db: float) -> Dict[str, float]:
     """
     Get weights based on SNR.
@@ -504,86 +515,3 @@ def get_adaptive_weights(snr_db: float) -> Dict[str, float]:
         return {'mfcc_dtw': 3.0, 'mel': 3.0, 'lpc': 1.0, 'stats': 0.0}
     else:
         return {'mfcc_dtw': 1.0, 'mel': 5.0, 'lpc': 0.5, 'stats': 0.0}
-
-
-    def load_templates_from_dir(self, template_dir: str):
-        """
-        Load templates from directory structure.
-
-        Expected structure:
-            template_dir/
-                <speaker>/
-                    <command>_<take>.wav
-        or:
-            template_dir/
-                <command><number>.m4a
-        """
-        from .audio_io import load_audio_file
-
-        template_path = Path(template_dir)
-
-        # Check cmd_templates folder first
-        cmd_templates_path = template_path / 'cmd_templates'
-        if cmd_templates_path.exists():
-            for audio_file in cmd_templates_path.glob('*.[mw][4a][av]'):
-                filename = audio_file.stem
-                
-                # Check for noise
-                if 'noise' in filename.lower() or '噪音' in filename:
-                    audio = load_audio_file(str(audio_file))
-                    self.add_noise_template(audio)
-                    print(f"Loaded noise template: {audio_file.name}")
-                    continue
-
-                for cn_cmd, en_cmd in config.COMMAND_MAPPING.items():
-                    if filename.startswith(cn_cmd):
-                        audio = load_audio_file(str(audio_file))
-                        self.add_template(en_cmd, audio, audio_file.name)
-                        print(f"Loaded template: {audio_file.name} -> {en_cmd}")
-                        break
-
-        # Check for direct files (like 開始1.m4a)
-        for audio_file in template_path.glob('*.[mw][4a][av]'):
-            filename = audio_file.stem
-            
-            # Check for noise
-            if 'noise' in filename.lower() or '噪音' in filename:
-                audio = load_audio_file(str(audio_file))
-                self.add_noise_template(audio)
-                print(f"Loaded noise template: {audio_file.name}")
-                continue
-
-            for cn_cmd, en_cmd in config.COMMAND_MAPPING.items():
-                if filename.startswith(cn_cmd):
-                    audio = load_audio_file(str(audio_file))
-                    self.add_template(en_cmd, audio, audio_file.name)
-                    print(f"Loaded template: {audio_file.name} -> {en_cmd}")
-                    break
-
-        # Check for noise directory
-        noise_dir = template_path / 'noise'
-        if noise_dir.exists() and noise_dir.is_dir():
-             for audio_file in noise_dir.glob('*.[mw][4a][av]'):
-                audio = load_audio_file(str(audio_file))
-                self.add_noise_template(audio)
-                print(f"Loaded noise template: {noise_dir.name}/{audio_file.name}")
-
-        # Check for speaker subdirectories
-        for speaker_dir in template_path.iterdir():
-            if speaker_dir.is_dir() and speaker_dir.name not in ['features', 'raw', 'cmd_templates', 'noise', 'record', 'src', 'temp', '__pycache__', '.git']:
-                for audio_file in speaker_dir.glob('*.[mw][4a][av]'):
-                    filename = audio_file.stem
-                    
-                    # Check for noise
-                    if 'noise' in filename.lower() or '噪音' in filename:
-                        audio = load_audio_file(str(audio_file))
-                        self.add_noise_template(audio)
-                        print(f"Loaded noise template: {speaker_dir.name}/{audio_file.name}")
-                        continue
-
-                    for cn_cmd, en_cmd in config.COMMAND_MAPPING.items():
-                        if cn_cmd in filename:
-                            audio = load_audio_file(str(audio_file))
-                            self.add_template(en_cmd, audio, audio_file.name)
-                            print(f"Loaded template: {speaker_dir.name}/{audio_file.name} -> {en_cmd}")
-                            break
