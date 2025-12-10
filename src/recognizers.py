@@ -327,13 +327,14 @@ class MultiMethodMatcher:
             return len(matcher.noise_templates)
         return 0
 
-    def recognize(self, audio: np.ndarray, mode: str = 'best') -> Dict:
+    def recognize(self, audio: np.ndarray, mode: str = 'best', adaptive: bool = False) -> Dict:
         """
         Recognize using all methods.
 
         Args:
             audio: Audio samples
             mode: 'best' returns only best result, 'all' returns all results
+            adaptive: Whether to use SNR-adaptive weighting
 
         Returns:
             Dict with recognition results
@@ -386,14 +387,20 @@ class MultiMethodMatcher:
                 'noise_distance': noise_dist
             }
 
-        # Weighted Ensemble Logic
-        # Weights based on QA performance: MFCC is best for commands, Mel is best for noise rejection
-        weights = {
-            'mfcc_dtw': 4.0,  # MVP: High accuracy
-            'mel': 2.5,       # Increased: Very stable in noise
-            'stats': 0.0,     # Disabled: Poor performance
-            'lpc': 1.0        # Decreased: Fragile in high noise
-        }
+        # Adaptive Weighting Logic
+        snr = 50.0 # Default High SNR
+        if adaptive:
+             from .audio_utils import estimate_snr
+             snr = estimate_snr(audio)
+             weights = get_adaptive_weights(snr)
+        else:
+             # Default Ensemble Weights
+             weights = {
+                'mfcc_dtw': 4.0,  # MVP: High accuracy
+                'mel': 2.5,       # Increased: Very stable in noise
+                'stats': 0.0,     # Disabled: Poor performance
+                'lpc': 1.0        # Decreased: Fragile in high noise
+            }
 
         command_scores = {}
         total_weight = 0
@@ -427,6 +434,7 @@ class MultiMethodMatcher:
 
         # Special Veto Rule: 
         # If Mel says NOISE, we lean heavily towards NOISE unless MFCC is VERY confident
+        # Only apply in non-adaptive or high-noise adaptive scenarios
         mel_res = results.get('mel')
         mfcc_res = results.get('mfcc_dtw')
         
@@ -469,7 +477,8 @@ class MultiMethodMatcher:
             'confidence': best_confidence,
             'method': best_method,
             'best_template': best_template,
-            'all_results': results
+            'all_results': results,
+            'snr': snr # Debug info
         }
 
         if mode == 'all':
@@ -479,6 +488,23 @@ class MultiMethodMatcher:
              del response['all_results']
         
         return response
+
+def get_adaptive_weights(snr_db: float) -> Dict[str, float]:
+    """
+    Get weights based on SNR.
+    
+    Strategy:
+    - Clean (>30dB): Favor mfcc_dtw (fast, accurate)
+    - Moderate (15-30dB): Balanced
+    - Noisy (<15dB): Favor mel (stable in noise)
+    """
+    if snr_db > 30:
+        return {'mfcc_dtw': 5.0, 'mel': 1.0, 'lpc': 0.5, 'stats': 0.0}
+    elif snr_db > 15:
+        return {'mfcc_dtw': 3.0, 'mel': 3.0, 'lpc': 1.0, 'stats': 0.0}
+    else:
+        return {'mfcc_dtw': 1.0, 'mel': 5.0, 'lpc': 0.5, 'stats': 0.0}
+
 
     def load_templates_from_dir(self, template_dir: str):
         """

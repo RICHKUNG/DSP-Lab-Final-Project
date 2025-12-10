@@ -39,12 +39,11 @@ TEMPLATE_FIXED_FRAMES = 50  # for mel template resizing
 STATS_SEGMENTS = 3  # number of segments for stats features
 
 # DTW settings
-DTW_RADIUS = 3  # Sakoe-Chiba band radius (E1-B: Testing radius=3 for noise robustness)
+DTW_RADIUS = 3  # Optimized from experiments (2025-12-10): Best balance of accuracy (85.7%) and speed (186ms)
 
-# Recognition thresholds (to be tuned)
-# In noisy environments, you might need to INCREASE these slightly (e.g., +10-20%)
-# because the input signal will be mixed with noise, making it "further" from the clean template.
-THRESHOLD_MFCC_DTW = 140.0  # Increased to cover max valid dist ~118
+# Recognition thresholds
+# Experimentally validated (2025-12-10): Current values are optimal. See docs/EXPERIMENT_NOISE_ROBUSTNESS.md
+THRESHOLD_MFCC_DTW = 140.0  # Optimal threshold (validated via arena testing)
 THRESHOLD_STATS = 600.0     # Increased due to more features (deltas+ZCR)
 THRESHOLD_MEL = 0.40        # Cosine distance - Balanced (tested: 0.35 too strict, 0.45 too loose)
 THRESHOLD_LPC = 100.0       # FastLPCMatcher - Balanced (tested: 80 too loose, 120 too strict)

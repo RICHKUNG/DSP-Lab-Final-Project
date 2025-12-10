@@ -8,13 +8,22 @@
 2. **Speaker-independent** - 任何人都能使用，不限於訓練者
 3. **低延遲 + 高準確率** - ≤ 250ms 延遲，≥ 80% 準確率 ✅
 
-## 📊 當前效能 (2025-12-09)
+## 📊 當前效能 (2025-12-10)
 
-| 指標 | 數值 | 狀態 |
-|------|------|------|
-| **延遲** | **217ms** | ✅ 達標 (目標 ≤250ms) |
-| **準確率** | **80.0%** | ✅ 達標 (Clean: 87%, 10dB: 60%) |
-| **加速比** | **3.2x** | ✅ 從700ms優化至217ms |
+### 最新效能 - DTW_RADIUS=3 優化
+
+| 指標 | MFCC_DTW | Ensemble | 狀態 |
+|------|----------|----------|------|
+| **延遲** | **165ms** | **220ms** | ✅ 達標 (目標 ≤250ms) |
+| **準確率** | **94.3%** | **94.6%** | ✅ 優秀 |
+| **噪音 10dB** | **64%** | **71%** ⭐ | ✅ Ensemble 優勢 |
+| **加速比** | **4.2x** | **3.2x** | ✅ 從700ms優化 |
+
+**方法選擇建議**:
+- **MFCC_DTW**: 速度優先，安靜環境（33% 更快）
+- **Ensemble**: 準確率優先，噪音環境（噪音下 +7% 準確率）
+
+詳細比較請參考 [`record/test_20251210_method_comparison.md`](record/test_20251210_method_comparison.md)
 
 詳細優化歷程請參考 [`docs/OPTIMIZATION_SUMMARY.md`](docs/OPTIMIZATION_SUMMARY.md)
 
@@ -101,9 +110,16 @@ python test_QA2.py --method mfcc_dtw
 **推薦使用** - 完整測試系統在各種條件下的表現：
 
 ```bash
-# 使用 Leave-One-Out 方法測試所有模板
-python test_arena.py
+# Ensemble 完整測試（約 5 分鐘，預設）
+python test_arena.py --method ensemble
+
+# MFCC_DTW 單一方法測試（約 3-4 分鐘，更快）
+python test_arena.py --method mfcc_dtw
 ```
+
+**方法選擇**:
+- `--method mfcc_dtw`: 單一方法測試（更快，適合快速驗證）
+- `--method ensemble`: 完整集成方法測試（更準確，可看到各方法表現）
 
 測試項目：
 - **Speed**: 0.7x ~ 1.3x (語速變化)

@@ -20,7 +20,9 @@
       "Bash(move exp_log.md docs )",
       "Bash(move OPTIMIZATION_SUMMARY.md docs )",
       "Bash(ls:*)",
-      "Bash(C:Usersuseranaconda3envsdspfppython.exe test_arena.py)"
+      "Bash(C:Usersuseranaconda3envsdspfppython.exe test_arena.py)",
+      "Bash(/c/Users/user/anaconda3/envs/dspfp/python.exe test_arena.py)",
+      "Bash(/c/Users/user/anaconda3/envs/dspfp/python.exe:*)"
     ],
     "deny": [],
     "ask": []

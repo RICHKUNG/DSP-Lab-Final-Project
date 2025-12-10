@@ -3,6 +3,7 @@
 import numpy as np
 from enum import Enum
 from . import config
+import librosa
 
 
 class VADState(Enum):
@@ -110,9 +111,40 @@ class VAD:
         self._speech_frames = 0
 
 
+def spectral_subtraction(audio: np.ndarray, n_fft: int = 512, hop_length: int = 256) -> np.ndarray:
+    """
+    Apply spectral subtraction for noise reduction.
+    """
+    # Safety check for very short audio
+    if len(audio) < n_fft:
+        return audio
+
+    # Compute STFT
+    stft = librosa.stft(audio.astype(np.float32), n_fft=n_fft, hop_length=hop_length)
+    mag = np.abs(stft)
+    phase = np.angle(stft)
+    
+    # Estimate noise from the first few frames (e.g., first 3 frames ~ 30-50ms)
+    # Using 'Minimum Statistics' approach (robust to speech start)
+    noise_est = np.min(mag, axis=1, keepdims=True)
+    
+    # Over-subtraction factor (alpha) and floor (beta)
+    alpha = 1.0
+    beta = 0.01
+    
+    # Subtract
+    mag_sub = mag - alpha * noise_est
+    mag_sub = np.maximum(mag_sub, beta * noise_est) # Spectral floor
+    
+    # Reconstruct
+    stft_sub = mag_sub * np.exp(1j * phase)
+    return librosa.istft(stft_sub, hop_length=hop_length, length=len(audio))
+
+
 def preprocess_audio(audio: np.ndarray) -> np.ndarray:
     """
     Preprocess audio for feature extraction.
+    - Spectral Subtraction
     - Remove DC offset
     - Pre-emphasis
     - RMS normalization
@@ -120,14 +152,21 @@ def preprocess_audio(audio: np.ndarray) -> np.ndarray:
     # Convert to float
     audio = audio.astype(np.float32)
 
-    # Remove DC offset
+    # 1. Spectral Subtraction (New)
+    try:
+        audio = spectral_subtraction(audio, n_fft=512, hop_length=256)
+    except Exception:
+        # Fallback if spectral subtraction fails (e.g. extremely short audio)
+        pass
+
+    # 2. Remove DC offset
     audio = audio - np.mean(audio)
 
-    # Pre-emphasis
+    # 3. Pre-emphasis
     pre_emphasis = 0.97
     audio = np.append(audio[0], audio[1:] - pre_emphasis * audio[:-1])
 
-    # RMS normalization
+    # 4. RMS normalization
     rms = np.sqrt(np.mean(audio ** 2))
     if rms > 0:
         audio = audio / rms * 0.1  # normalize to ~0.1 RMS

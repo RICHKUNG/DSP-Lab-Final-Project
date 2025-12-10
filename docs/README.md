@@ -1,93 +1,88 @@
-# 文檔目錄
+# Documentation Directory
 
-此目錄包含專案的詳細文檔、實驗記錄和分析報告。
+This directory contains comprehensive documentation for the Bio-Voice Commander project.
 
-## 📚 主要文檔
+## 📚 Main Documents
 
-### 指南類
-- **`BENCHMARK_GUIDE.md`** - 測試基準系統使用指南
-  - 如何運行Arena測試
-  - 如何查看和比較歷史結果
-  - 結果檔案格式說明
+### Performance & Optimization
+- **[OPTIMIZATION_SUMMARY.md](OPTIMIZATION_SUMMARY.md)** - Complete optimization history (700ms → 186ms)
+- **[EXPERIMENT_NOISE_ROBUSTNESS.md](EXPERIMENT_NOISE_ROBUSTNESS.md)** ⭐ **NEW** - Latest experiment results (2025-12-10)
+  - DTW_RADIUS optimization (2→3): +5.7% accuracy, -14% latency
+  - Threshold validation
+  - Noise robustness analysis
+- **[exp_fast_1.md](exp_fast_1.md)** - FastLPCMatcher experiment (2x speedup)
+- **[exp_fast_2.md](exp_fast_2.md)** - DTW Radius experiment (1.5x speedup)
+- **[exp_log.md](exp_log.md)** - Other optimization experiments
 
-### 分析報告
-- **`ACCURACY_ANALYSIS.md`** - 準確率分析報告
-  - 當前系統準確率分析 (80%)
-  - 為何Mel/LPC方法表現較差
-  - 提升準確率的真正方法
-  - 問題模板識別
-  - 改進建議 (模板品質、特徵工程、深度學習)
+### Testing & Analysis
+- **[BENCHMARK_GUIDE.md](BENCHMARK_GUIDE.md)** - Testing system guide (arena, QA, analysis tools)
+- **[ACCURACY_ANALYSIS.md](ACCURACY_ANALYSIS.md)** - Accuracy analysis and improvement suggestions
 
-- **`OPTIMIZATION_SUMMARY.md`** - 速度優化總結
-  - 從700ms優化到217ms的完整歷程
-  - FastLPCMatcher優化 (Phase 1)
-  - DTW Radius優化 (Phase 2)
-  - 最終配置和權衡分析
+## 🗂️ Archive
 
-## 🔬 實驗記錄
+Historical experiment plans and deprecated documents are stored in `archive/`:
+- `experiment_plan_20251210.md` - Noise robustness experiment plan
 
-- **`exp_fast_1.md`** - FastLPCMatcher實驗
-  - 問題: LPC DTW太慢 (480ms)
-  - 解法: 固定尺寸 + 歐式距離
-  - 結果: 700ms → 330ms (2.1x加速)
-  - 準確率: 維持100%
+## 📊 Latest Performance (2025-12-10)
 
-- **`exp_fast_2.md`** - DTW Radius優化實驗
-  - 問題: MFCC DTW是新瓶頸 (330ms, 佔88%)
-  - 解法: DTW_RADIUS從5降至2
-  - 結果: 330ms → 217ms (1.5x加速)
-  - 準確率: 80.3% → 80.0% (可接受)
+**Configuration**:
+```python
+DTW_RADIUS = 3              # Optimized from 2
+THRESHOLD_MFCC_DTW = 140.0  # Validated
+```
 
-- **`exp_log.md`** - 其他實驗記錄
+**Results**:
+| Metric | Value | Change from Baseline |
+|--------|-------|---------------------|
+| Overall Accuracy | **85.7%** | +5.7% ✅ |
+| Clean Accuracy | **93%** | +6.3% ✅ |
+| Processing Time | **186ms** | -14% ✅ |
+| Noise 20dB | 79% | +12.3% ✅ |
+| Noise 10dB | 57% | -3% ⚠️ |
 
-## 📋 規劃文檔
+## 🔬 Experiment Methodology
 
-- **`PLAN.md`** - 專案規劃和待辦事項
+All experiments follow a systematic approach:
+1. **Baseline Measurement** - Record current performance
+2. **Hypothesis Formation** - Identify optimization target
+3. **Controlled Testing** - Change one variable at a time
+4. **Arena Validation** - Test with Leave-One-Out methodology
+5. **Documentation** - Archive results in JSON format
+6. **Analysis** - Compare via `temp/view_history.py`
 
-## 📊 關鍵成果摘要
+## 🎯 Future Work
 
-### 速度優化
-| 階段 | 延遲 | 加速比 | 準確率 |
-|------|------|--------|--------|
-| 原始 | 700ms | 1.0x | 80.3% |
-| Phase 1 (FastLPC) | 330ms | 2.1x | 80.3% ✅ |
-| Phase 2 (DTW r=2) | **217ms** | **3.2x** | 80.0% ✅ |
+Based on [EXPERIMENT_NOISE_ROBUSTNESS.md](EXPERIMENT_NOISE_ROBUSTNESS.md):
 
-### 準確率分析
-| 方法 | 準確率 | 角色 |
-|------|--------|------|
-| MFCC-DTW | 80.0% | 主力 ✅ |
-| Mel-Spectrogram | 44-53% | 輔助 ⚠️ |
-| LPC (Fast) | 50.7% | 輔助 ⚠️ |
-| Ensemble | 80.0% | = MFCC |
+**High Priority**:
+- Template quality audit (use `temp/find_bad_templates.py`)
+- Re-record poor templates (especially 開始.wav)
 
-**關鍵洞察:**
-- 當前配置已達特徵/模板組合的準確率上限
-- 需要改善模板品質才能突破80%
+**Medium Priority**:
+- Test RASTA-PLP features (more noise-robust)
+- Spectral subtraction preprocessing
 
-## 🔗 相關資源
+**Low Priority**:
+- Ensemble weight tuning for noisy conditions
+- Confidence-based fallback mechanisms
 
-### 測試工具
-- 測試工具位於 `../temp/` 目錄
-- 測試結果保存在 `../record/` 目錄
+## 📝 Document Index
 
-### 程式碼
-- 核心代碼在 `../src/` 目錄
-- 配置檔案: `../src/config.py`
-- 主要模組: `../src/recognizers.py`
+```
+docs/
+├── README.md                          # This file
+├── OPTIMIZATION_SUMMARY.md            # Complete optimization history
+├── EXPERIMENT_NOISE_ROBUSTNESS.md     # Latest experiments (2025-12-10) ⭐
+├── ACCURACY_ANALYSIS.md               # Accuracy improvement guide
+├── BENCHMARK_GUIDE.md                 # Testing system documentation
+├── exp_fast_1.md                      # FastLPC experiment
+├── exp_fast_2.md                      # DTW Radius experiment
+├── exp_log.md                         # Misc experiments
+└── archive/                           # Historical documents
+    └── experiment_plan_20251210.md    # Experiment planning doc
+```
 
-## 📖 閱讀順序建議
+---
 
-### 了解系統優化歷程
-1. `OPTIMIZATION_SUMMARY.md` - 優化總覽
-2. `exp_fast_1.md` - LPC優化細節
-3. `exp_fast_2.md` - DTW優化細節
-
-### 了解準確率狀況
-1. `ACCURACY_ANALYSIS.md` - 完整分析報告
-2. 運行 `../temp/analyze_failures.py` - 查看當前失敗情況
-3. 運行 `../temp/find_bad_templates.py` - 找出問題模板
-
-### 使用測試系統
-1. `BENCHMARK_GUIDE.md` - 測試系統指南
-2. `../temp/README.md` - 測試工具說明
+*Last Updated: 2025-12-10*
+*Maintainer: Bio-Voice Commander Development Team*
