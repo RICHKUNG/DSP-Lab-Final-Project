@@ -3,6 +3,8 @@
 import numpy as np
 import librosa
 from scipy.ndimage import zoom
+from scipy.signal import lfilter
+from scipy.fftpack import dct
 from . import config
 
 
@@ -49,6 +51,71 @@ def extract_mfcc(audio: np.ndarray, include_delta: bool = True) -> np.ndarray:
 def extract_mfcc_delta(audio: np.ndarray) -> np.ndarray:
     """Extract MFCC with delta and delta-delta."""
     return extract_mfcc(audio, include_delta=True)
+
+
+# =============================================================================
+# RASTA-PLP (Approximation) Features
+# =============================================================================
+
+def extract_rasta_plp(audio: np.ndarray, n_coeffs: int = 13) -> np.ndarray:
+    """
+    Extract RASTA-PLP features (Approximation).
+    
+    Implements RASTA filtering on Log Mel-Spectrogram followed by DCT.
+    This provides noise robustness by filtering out slow-moving channel noise.
+
+    Args:
+        audio: Audio samples
+        n_coeffs: Number of cepstral coefficients
+
+    Returns:
+        RASTA-PLP features (n_frames, n_coeffs)
+    """
+    if audio.dtype != np.float32:
+        audio = audio.astype(np.float32)
+        if np.max(np.abs(audio)) > 1.0:
+            audio = audio / 32768.0
+
+    # 1. Compute Log Mel-Spectrogram
+    # We use power spectrum (power=2.0) as per PLP, but standard mel filterbank
+    mel_spec = librosa.feature.melspectrogram(
+        y=audio,
+        sr=config.SAMPLE_RATE,
+        n_mels=config.N_MELS,
+        n_fft=config.N_FFT,
+        hop_length=config.HOP_LENGTH,
+        power=2.0
+    )
+    
+    # Logarithm (with offset to avoid log(0))
+    # PLP usually uses log(power + epsilon)
+    log_mel = np.log(mel_spec + 1e-6)
+
+    # 2. RASTA Filtering
+    # Filter is applied along the time axis (axis=1) for each frequency band
+    # H(z) = 0.1 * z^4 * (2 + z^-1 - z^-3 - 2z^-4) / (1 - 0.98z^-1)
+    
+    # Numerator: 0.2*z^0 + 0.1*z^-1 + 0*z^-2 - 0.1*z^-3 - 0.2*z^-4
+    b = np.array([0.2, 0.1, 0.0, -0.1, -0.2])
+    
+    # Denominator: 1 - 0.98*z^-1
+    a = np.array([1.0, -0.98])
+    
+    # Apply filter along time axis (columns)
+    rasta_log_mel = lfilter(b, a, log_mel, axis=1)
+
+    # 3. DCT (Discrete Cosine Transform) to get Cepstral Coefficients
+    # Type 2 DCT, orthonormal
+    # Axis=0 is frequency bands (n_mels), we want to decorrelate these
+    cepstra = dct(rasta_log_mel, type=2, axis=0, norm='ortho')
+    
+    # Keep desired number of coefficients
+    features = cepstra[:n_coeffs, :].T
+    
+    # 4. CMN (Cepstral Mean Normalization)
+    features = features - np.mean(features, axis=0)
+    
+    return features
 
 
 # =============================================================================

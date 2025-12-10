@@ -192,7 +192,7 @@ def main():
     import argparse
 
     parser = argparse.ArgumentParser(description='Bio-Voice Commander')
-    parser.add_argument('--templates', '-t', type=str, default='.',
+    parser.add_argument('--templates', '-t', type=str, default=str(config.TEMPLATE_DIR),
                         help='Template directory')
     parser.add_argument('--test', type=str, default=None,
                         help='Test with audio file')

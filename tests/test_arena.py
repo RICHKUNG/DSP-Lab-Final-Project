@@ -327,6 +327,10 @@ def run_arena(mode: str = 'all'):
         active_methods = ['mfcc_dtw', 'mel', 'lpc']
         report_methods = ['mfcc_dtw', 'mel', 'lpc', 'ensemble']
         use_adaptive = True
+    elif mode == 'rasta_plp':
+        active_methods = ['rasta_plp']
+        report_methods = ['rasta_plp']
+        use_adaptive = False
     else:
         active_methods = ['mfcc_dtw', 'mel', 'lpc']
         report_methods = ['mfcc_dtw', 'mel', 'lpc', 'ensemble']
@@ -428,6 +432,12 @@ def run_arena(mode: str = 'all'):
                         stats[suite_name]['mfcc_dtw'][val].update(expected_label, pred_cmd)
                         match_mark = "OK" if pred_cmd == expected_label else "FAIL"
                         print(f"    [{suite_name} {val:g}] {pred_cmd:8s} {match_mark} ({dt_ms:.0f}ms)")
+                    elif mode == 'rasta_plp':
+                        # Explicit RASTA extraction
+                        pred_cmd = results['all_results']['rasta_plp']['command']
+                        stats[suite_name]['rasta_plp'][val].update(expected_label, pred_cmd)
+                        match_mark = "OK" if pred_cmd == expected_label else "FAIL"
+                        print(f"    [{suite_name} {val:g}] {pred_cmd:8s} {match_mark} ({dt_ms:.0f}ms)")
                     else:
                         # Record Ensemble
                         ensemble_pred = results['command']
@@ -514,7 +524,7 @@ def run_arena(mode: str = 'all'):
         return
 
     # Analyze noise robustness (only if we have noise stats)
-    if 'Noise' in stats and mode != 'mfcc':
+    if 'Noise' in stats and mode != 'mfcc' and mode != 'rasta_plp':
         proposals = []
         noise_drops = {}
 
@@ -549,8 +559,8 @@ def run_arena(mode: str = 'all'):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Run Arena Test')
-    parser.add_argument('--mode', type=str, default='all', choices=['mfcc', 'ensemble', 'all', 'adaptive_ensemble'],
-                        help='Test mode: mfcc (fast), ensemble (robust), adaptive_ensemble (smart), or all (full stats)')
+    parser.add_argument('--mode', type=str, default='all', choices=['mfcc', 'ensemble', 'all', 'adaptive_ensemble', 'rasta_plp'],
+                        help='Test mode: mfcc (fast), ensemble (robust), adaptive_ensemble (smart), rasta_plp (experimental), or all (full stats)')
     args = parser.parse_args()
     
     run_arena(mode=args.mode)

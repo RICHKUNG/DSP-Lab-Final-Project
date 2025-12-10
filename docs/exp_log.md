@@ -4,6 +4,85 @@
 
 ---
 
+## [New] Phase 8: Ensemble Strategy Evolution (2025-12-10)
+
+*探索比單純加權平均 (Soft Voting) 更佳的集成策略。*
+
+### 1. 實驗設計
+*   **Baseline**: `Adaptive Ensemble` (Soft Voting) - 加權各方法的信心分數 (Distance based)。
+*   **Challenger**: `Voting Ensemble` (Hard Voting) - 各方法 "投一票" (加權)，不看距離絕對值，只看排名。
+    *   *原理*: 避免單一方法因距離異常 (Outlier) 而綁架整個決策。
+
+### 2. 測試結果 (Arena Comparison)
+| Scenario | Adaptive (Soft) | Voting (Hard) | Analysis |
+|----------|-----------------|---------------|----------|
+| **Pitch -2.5st** | 93% | **100%** | Hard Voting 修復了 `頝3.wav` 的誤判 |
+| Noise 10dB | 93% | 93% | 平手 |
+| Speed 1.3x | 93% | 93% | 平手 (皆在 `暫停4` 失敗) |
+| Volume | 100% | 100% | 平手 |
+
+### 3. 結論
+*   **Hard Voting 勝出**: 在極端變調 (Pitch -2.5st) 情況下，Hard Voting 展現了更好的穩健性。
+*   **機制更新**: 已在 `src/recognizers.py` 中實作 `recognize_voting` 方法，並支援信心分數計算 (`votes / total_weights`)。
+
+---
+
+## [New] Phase 7: RASTA-PLP Feasibility Study (2025-12-10)
+
+*此階段驗證了 RASTA-PLP (Approximation) 特徵是否能進一步提升抗噪能力。*
+
+### 1. 實驗設計
+*   **方法**: 實作 `extract_rasta_plp`，在 Log Mel Spectrogram 上應用 RASTA 濾波器 ($H(z) \approx 0.1 z^4 \frac{2 + z^{-1} - z^{-3} - 2z^{-4}}{1 - 0.98z^{-1}}$)，再進行 DCT。
+*   **目的**: 測試其是否能在 10dB 噪音下超越現有的 Adaptive Ensemble。
+
+### 2. 測試結果 (Arena RASTA_PLP)
+*   **Speed/Pitch/Volume**: 表現極佳 (98%+, 100%)，與 MFCC 相當。
+*   **Noise Robustness**:
+    *   25dB: 86%
+    *   20dB: 93% (表現優異，單一特徵能達到此水準很強)
+    *   15dB: 86%
+    *   **10dB: 57%** (崩潰點)
+
+### 3. 結論
+*   RASTA-PLP 在中度噪音 (20dB) 下表現強勁，但在高噪音 (10dB) 下不如 Adaptive Ensemble (93%)。
+*   **決策**: 保留程式碼作為備用特徵，但不加入預設 Ensemble，因為 Adaptive Ensemble 目前已能完美處理 20dB (100%) 和 10dB (93%) 的情況。
+
+---
+
+## [Archive] Phase 6: Extreme Robustness Optimization (2025-12-10)
+
+*此階段目標是解決 `adaptive_ensemble` 在中度噪聲 (20-25dB) 和極端變速 (1.3x) 下的剩餘錯誤。*
+
+### 1. 問題診斷
+*   **Speed/Pitch**: `暫停4.wav` 在 1.1x/1.3x 速度下被誤判為 `START`。推測是 DTW 搜尋半徑過小，無法捕捉時間軸變形。
+*   **Noise**: `開始` 指令在 25dB-15dB 區間偶爾被誤判。推測是 MFCC/LPC 在此區間權重過高，而 Mel 權重不足。
+
+### 2. 優化行動
+1.  **DTW Radius**: 從 `3` 增加到 `6`。
+    *   *目的*: 增加對時間伸縮的容忍度。
+    *   *代價*: 平均延遲從 ~160ms 增加到 ~270ms (仍可接受)。
+2.  **Adaptive Weights**: 調整 "Moderate Noise" (15-30dB) 的權重分配。
+    *   *舊*: `mfcc: 3.0, mel: 3.0, lpc: 1.0`
+    *   *新*: `mfcc: 3.0, mel: 4.0, lpc: 0.5`
+    *   *原理*: 降低對噪聲敏感的 LPC 依賴，提高對噪聲穩健的 Mel 依賴。
+3.  **Mel Threshold**: 微調至 `0.50` (從 0.40 -> 0.45 -> 0.50 -> 0.55 測試後回退)。
+
+### 3. 最終測試結果 (Arena Extreme & Mixed)
+*   **Standard Arena**: 總體準確率 **97.9%**。
+    *   **Noise**: 100dB, 25dB, 20dB 皆達到 **100%**。15dB, 10dB 維持 **93%**。
+    *   **Speed/Pitch**: 大部分場景 100%，僅極端 pitch (+2.5st) 有少量誤判。
+*   **Extreme Arena**:
+    *   **0dB SNR**: **93% 準確率** (噪音與信號一樣大時仍能穩定工作)。
+    *   **-5dB SNR**: 79% (系統極限)。
+*   **Mixed Conditions**:
+    *   **Indoor/Fast/Distant/Tired**: **100%**。
+    *   **Stress Test (Combined distortions)**: **92.9%**。
+
+### 結論
+透過動態權重調整與參數微調，系統已達到極致穩健性。無需引入新的特徵提取方法 (如 RASTA-PLP) 即可滿足絕大多數應用場景。
+
+---
+
 ## [Archive] 對抗噪音的策略演進 (From Early Insight)
 
 *此章節記錄了開發過程中對抗噪音的五個演進階段。*

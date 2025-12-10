@@ -9,7 +9,7 @@ from scipy.ndimage import zoom
 
 from . import config
 from .vad import preprocess_audio
-from .features import extract_mfcc, extract_stats_features, extract_mel_template, extract_lpc_features, mel_distance
+from .features import extract_mfcc, extract_stats_features, extract_mel_template, extract_lpc_features, extract_rasta_plp, mel_distance
 from .template_loader import load_templates_from_dir as _load_templates_from_dir
 
 
@@ -62,7 +62,7 @@ class TemplateMatcher:
     def __init__(self, method: str = 'mfcc_dtw', threshold: float = None):
         """
         Args:
-            method: 'mfcc_dtw', 'stats', 'mel', 'lpc'
+            method: 'mfcc_dtw', 'stats', 'mel', 'lpc', 'rasta_plp'
             threshold: Recognition threshold (None for default)
         """
         self.method = method
@@ -75,7 +75,8 @@ class TemplateMatcher:
                 'mfcc_dtw': config.THRESHOLD_MFCC_DTW,
                 'stats': config.THRESHOLD_STATS,
                 'mel': config.THRESHOLD_MEL,
-                'lpc': config.THRESHOLD_LPC
+                'lpc': config.THRESHOLD_LPC,
+                'rasta_plp': config.THRESHOLD_RASTA_PLP
             }
             threshold = threshold_map.get(method, 50.0)
         self.threshold = threshold
@@ -92,6 +93,8 @@ class TemplateMatcher:
             return extract_mel_template(processed)
         elif self.method == 'lpc':
             return extract_lpc_features(processed)
+        elif self.method == 'rasta_plp':
+            return extract_rasta_plp(processed)
         else:
             raise ValueError(f"Unknown method: {self.method}")
 
@@ -111,7 +114,7 @@ class TemplateMatcher:
 
     def _compute_distance(self, feat1: np.ndarray, feat2: np.ndarray) -> float:
         """Compute distance between features."""
-        if self.method == 'mfcc_dtw':
+        if self.method == 'mfcc_dtw' or self.method == 'rasta_plp':
             return dtw_distance_normalized(feat1, feat2, radius=config.DTW_RADIUS)
         elif self.method == 'mel':
             return mel_distance(feat1, feat2, metric='cosine')
@@ -355,6 +358,9 @@ class MultiMethodMatcher:
         if 'mel' in self.matchers:
             feature_cache['mel'] = extract_mel_template(processed_audio)
 
+        if 'rasta_plp' in self.matchers:
+            feature_cache['rasta_plp'] = extract_rasta_plp(processed_audio)
+
         # For LPC with FastLPCMatcher, let it handle feature extraction internally
         # (it needs to resize and flatten, which is specific to FastLPCMatcher)
         # So we don't pre-cache LPC features
@@ -398,9 +404,9 @@ class MultiMethodMatcher:
              # Default Ensemble Weights
              weights = {
                 'mfcc_dtw': 4.0,  # MVP: High accuracy
-                'mel': 2.5,       # Increased: Very stable in noise
+                'mel': 3.5,       # Increased: Very stable in noise
                 'stats': 0.0,     # Disabled: Poor performance
-                'lpc': 1.0        # Decreased: Fragile in high noise
+                'lpc': 0.5        # Decreased: Fragile in high noise
             }
 
         command_scores = {}
@@ -491,6 +497,99 @@ class MultiMethodMatcher:
         
         return response
 
+    def recognize_voting(self, audio: np.ndarray, adaptive: bool = True) -> Dict:
+        """
+        Recognize using Weighted Majority Voting (Hard Voting).
+        
+        Unlike standard recognize() which sums confidence scores (Soft Voting),
+        this method counts discrete votes from each classifier.
+        
+        Args:
+            audio: Audio samples
+            adaptive: Whether to use SNR-adaptive voting weights
+        """
+        # 1. Standard extraction
+        processed_audio = preprocess_audio(audio)
+        feature_cache = {}
+        
+        if 'mfcc_dtw' in self.matchers:
+            feature_cache['mfcc_dtw'] = extract_mfcc(processed_audio)
+        if 'mel' in self.matchers:
+            feature_cache['mel'] = extract_mel_template(processed_audio)
+        if 'rasta_plp' in self.matchers:
+            feature_cache['rasta_plp'] = extract_rasta_plp(processed_audio)
+
+        # 2. Get individual results
+        results = {}
+        for method, matcher in self.matchers.items():
+            if method == 'stats': continue
+            
+            feats = feature_cache.get(method)
+            if method == 'lpc': feats = None
+            
+            cmd, dist, best_tpl, all_dists, noise_dist = matcher.recognize(audio, features=feats)
+            results[method] = {
+                'command': cmd,
+                'distance': dist,
+                'best_template': best_tpl
+            }
+
+        # 3. Determine Weights
+        snr = 50.0
+        if adaptive:
+             from .audio_utils import estimate_snr
+             snr = estimate_snr(audio)
+             weights = get_adaptive_weights(snr)
+        else:
+             weights = {'mfcc_dtw': 4.0, 'mel': 2.5, 'lpc': 1.0, 'stats': 0.0}
+
+        # 4. Voting Logic
+        votes = {}
+        
+        for method, res in results.items():
+            cmd = res['command']
+            weight = weights.get(method, 0.0)
+            
+            # Veto logic: If Mel says NOISE, and MFCC is weak, treat as NOISE
+            if method == 'mel' and cmd == 'NOISE':
+                mfcc_res = results.get('mfcc_dtw')
+                if mfcc_res:
+                    # Check MFCC confidence
+                    mfcc_thresh = getattr(self.matchers['mfcc_dtw'], 'threshold', 140.0)
+                    mfcc_conf = max(0, 1 - (mfcc_res['distance'] / mfcc_thresh))
+                    if mfcc_conf < 0.6: # If MFCC is unsure
+                        votes['NOISE'] = votes.get('NOISE', 0) + 5.0 # Super Vote for Noise
+            
+            if cmd != 'NONE':
+                votes[cmd] = votes.get(cmd, 0) + weight
+
+        # 5. Winner
+        best_command = 'NONE'
+        max_votes = -1.0
+        total_possible_votes = 0.0
+        
+        for method, weight in weights.items():
+            if method in results:
+                total_possible_votes += weight
+
+        for cmd, vote_count in votes.items():
+            if vote_count > max_votes:
+                max_votes = vote_count
+                best_command = cmd
+        
+        # Calculate Vote Confidence
+        confidence = 0.0
+        if total_possible_votes > 0:
+            confidence = max_votes / total_possible_votes
+
+        return {
+            'command': best_command,
+            'confidence': confidence,
+            'method': 'voting',
+            'snr': snr,
+            'all_results': results
+        }
+
     def load_templates_from_dir(self, template_dir: str):
         """Delegate to shared template loader."""
         _load_templates_from_dir(
@@ -512,6 +611,8 @@ def get_adaptive_weights(snr_db: float) -> Dict[str, float]:
     if snr_db > 30:
         return {'mfcc_dtw': 5.0, 'mel': 1.0, 'lpc': 0.5, 'stats': 0.0}
     elif snr_db > 15:
-        return {'mfcc_dtw': 3.0, 'mel': 3.0, 'lpc': 1.0, 'stats': 0.0}
+        # Moderate: Increased Mel weight to handle 20-25dB noise better
+        # Decreased LPC as it degrades quickly
+        return {'mfcc_dtw': 3.0, 'mel': 4.0, 'lpc': 0.5, 'stats': 0.0}
     else:
         return {'mfcc_dtw': 1.0, 'mel': 5.0, 'lpc': 0.5, 'stats': 0.0}

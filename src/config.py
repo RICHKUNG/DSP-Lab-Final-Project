@@ -1,5 +1,13 @@
 """Global configuration for Bio-Voice Commander."""
 
+import os
+from pathlib import Path
+
+# Path settings
+# Resolve the project root relative to this config file (src/config.py -> src/ -> root)
+BASE_DIR = Path(__file__).resolve().parent.parent
+TEMPLATE_DIR = BASE_DIR / "cmd_templates"
+
 # Audio settings
 SAMPLE_RATE = 16000
 CHANNELS = 1
@@ -39,14 +47,15 @@ TEMPLATE_FIXED_FRAMES = 50  # for mel template resizing
 STATS_SEGMENTS = 3  # number of segments for stats features
 
 # DTW settings
-DTW_RADIUS = 3  # Optimized from experiments (2025-12-10): Best balance of accuracy (85.7%) and speed (186ms)
+DTW_RADIUS = 6  # Increased to 6 to handle speed variations better (e.g., 暫停4.wav)
 
 # Recognition thresholds
 # Experimentally validated (2025-12-10): Current values are optimal. See docs/EXPERIMENT_NOISE_ROBUSTNESS.md
 THRESHOLD_MFCC_DTW = 140.0  # Optimal threshold (validated via arena testing)
 THRESHOLD_STATS = 600.0     # Increased due to more features (deltas+ZCR)
-THRESHOLD_MEL = 0.40        # Cosine distance - Balanced (tested: 0.35 too strict, 0.45 too loose)
+THRESHOLD_MEL = 0.50        # Cosine distance - Optimized for a balance of no_match and wrong_command
 THRESHOLD_LPC = 100.0       # FastLPCMatcher - Balanced (tested: 80 too loose, 120 too strict)
+THRESHOLD_RASTA_PLP = 140.0 # RASTA-PLP Matcher
 
 # Command list
 COMMANDS = ['START', 'PAUSE', 'JUMP', 'MAGNET', 'INVERT']
