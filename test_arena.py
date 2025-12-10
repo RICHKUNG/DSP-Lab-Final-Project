@@ -12,7 +12,7 @@ from datetime import datetime
 from typing import Dict, List, Tuple
 
 # Ensure src is in path
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 try:
     from src.audio_io import load_audio_file
@@ -35,28 +35,28 @@ def apply_augmentation(audio: np.ndarray, type: str, value: float) -> np.ndarray
     """Apply specific augmentation to audio."""
     # Convert to float32 for processing
     y_float = audio.astype(np.float32) / 32768.0
-    
+
     if type == 'Speed':
         if value == 1.0: return audio
         y_aug = librosa.effects.time_stretch(y_float, rate=value)
-        
+
     elif type == 'Pitch':
         if value == 0.0: return audio
         y_aug = librosa.effects.pitch_shift(y_float, sr=config.SAMPLE_RATE, n_steps=value)
-        
+
     elif type == 'Noise':
         if value >= 100: return audio
         p_signal = np.mean(y_float ** 2)
         if p_signal == 0: return audio
-        
+
         p_noise = p_signal / (10 ** (value / 10.0))
         noise = np.random.normal(0, np.sqrt(p_noise), len(y_float))
         y_aug = y_float + noise
-        
+
     elif type == 'Volume':
         if value == 1.0: return audio
         y_aug = y_float * value
-        
+
     else:
         return audio
 
@@ -103,7 +103,7 @@ def get_config_snapshot():
 
 def save_arena_results(stats, overall_scores, total_scenarios, timestamp_str):
     """Save arena results to JSON file."""
-    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    base_dir = os.path.dirname(os.path.abspath(__file__))
     record_dir = os.path.join(base_dir, "record")
     os.makedirs(record_dir, exist_ok=True)
 
@@ -184,13 +184,13 @@ def run_arena():
     print(f"   Time: {timestamp}")
     print("=" * 70)
 
-    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    base_dir = os.path.dirname(os.path.abspath(__file__))
     template_dir = os.path.join(base_dir, "cmd_templates")
-    
+
     # 1. Gather all template files
     all_files = sorted(glob.glob(os.path.join(template_dir, "*.*")))
     valid_files = []
-    
+
     for f in all_files:
         if get_label_from_filename(f) != "UNKNOWN" and 'noise' not in os.path.basename(f).lower():
             valid_files.append(f)
@@ -201,7 +201,7 @@ def run_arena():
     # Structure: stats[suite_name][method_name][test_value] = ArenaResult
     methods = ['mfcc_dtw', 'mel', 'lpc', 'ensemble']
     stats = {}
-    
+
     # Time stats: Suite -> Value -> List[float]
     time_stats = {}
 
@@ -217,9 +217,9 @@ def run_arena():
     for idx, test_file in enumerate(valid_files):
         test_filename = os.path.basename(test_file)
         expected_label = get_label_from_filename(test_file)
-        
+
         print(f"\n[{idx+1}/{len(valid_files)}] Testing: {test_filename} ({expected_label})")
-        
+
         try:
             original_audio = load_audio_file(test_file)
         except Exception as e:
@@ -227,12 +227,12 @@ def run_arena():
             continue
 
         matcher = MultiMethodMatcher()
-        
+
         train_count = 0
         for train_file in valid_files:
             if train_file == test_file:
                 continue
-            
+
             lbl = get_label_from_filename(train_file)
             try:
                 audio_t = load_audio_file(train_file)
@@ -240,7 +240,7 @@ def run_arena():
                 train_count += 1
             except:
                 pass
-        
+
         if train_count == 0:
             print("  [Warning] No training templates available! Skipping.")
             continue
@@ -250,23 +250,23 @@ def run_arena():
             for val in test_values:
                 # Augment
                 input_audio = apply_augmentation(original_audio, suite_name, val)
-                
+
                 # Recognize
                 t0 = time.time()
                 results = matcher.recognize(input_audio, mode='all')
                 dt_ms = (time.time() - t0) * 1000
                 time_stats[suite_name][val].append(dt_ms)
-                
+
                 # Record Ensemble
                 ensemble_pred = results['command']
                 stats[suite_name]['ensemble'][val].update(expected_label, ensemble_pred)
-                
+
                 # Record Individuals
                 for method in methods:
                     if method == 'ensemble': continue
                     pred = results['all_results'][method]['command']
                     stats[suite_name][method][val].update(expected_label, pred)
-                
+
                 match_mark = "OK" if ensemble_pred == expected_label else "FAIL"
                 print(f"    [{suite_name} {val:g}] {ensemble_pred:8s} {match_mark} ({dt_ms:.0f}ms)")
 
@@ -274,13 +274,13 @@ def run_arena():
     print("\n" + "=" * 80)
     print("ARENA RESULTS SUMMARY")
     print("=" * 80)
-    
+
     overall_scores = {m: 0.0 for m in methods}
     total_scenarios = 0
 
     for suite_name, test_values in TEST_SUITES.items():
         print(f"\n>> {suite_name.upper()} ROBUSTNESS")
-        
+
         # Header
         header = f"{'Method':<12} |"
         for val in test_values:
@@ -302,9 +302,9 @@ def run_arena():
                 suite_acc_sum += acc
                 row += f" {acc*100:6.0f}% |"
             print(row)
-            
+
             overall_scores[method] += suite_acc_sum
-        
+
         # Time Stats
         print(f"{'Avg Time':<12} |", end="")
         for val in test_values:
@@ -312,15 +312,15 @@ def run_arena():
              avg_t = sum(times)/len(times) if times else 0
              print(f" {avg_t:4.0f}ms  |", end="")
         print()
-        
+
         total_scenarios += len(test_values)
 
     print("\n" + "=" * 80)
     print("PROPOSED IMPROVEMENTS")
     print("=" * 80)
-    
+
     print(f"Total Scenarios: {total_scenarios}")
-    
+
     if total_scenarios > 0:
         best_method = max(overall_scores, key=overall_scores.get)
         best_avg = overall_scores[best_method] / total_scenarios
@@ -328,16 +328,16 @@ def run_arena():
     else:
         print("No scenarios run!")
         return
-    
+
     proposals = []
-    
+
     # Noise check
     noise_drops = {}
     for method in methods:
         clean = stats['Noise'][method][100].accuracy()
         noisy = stats['Noise'][method][10].accuracy()
         noise_drops[method] = clean - noisy
-    
+
     worst_noise_method = max(noise_drops, key=noise_drops.get)
     if noise_drops[worst_noise_method] > 0.4:
          proposals.append(f"- {worst_noise_method} fails in noise (drop {noise_drops[worst_noise_method]*100:.0f}%). Decrease its weight in noisy conditions.")

@@ -11,7 +11,16 @@
       "Bash(C:Usersuserminiconda3condabinmamba.bat --version)",
       "Bash(cmd /c \"C:\\Users\\user\\miniconda3\\condabin\\conda.bat run -n base mamba --version\")",
       "Bash(powershell:*)",
-      "Bash(cmd /c \"cd /d C:\\Users\\user\\Desktop\\DSPLab\\Final && C:\\Users\\user\\anaconda3\\envs\\dspfp\\python.exe -c \"\"from src.recognizers import MultiMethodMatcher; print(''Import OK'')\"\"\")"
+      "Bash(cmd /c \"cd /d C:\\Users\\user\\Desktop\\DSPLab\\Final && C:\\Users\\user\\anaconda3\\envs\\dspfp\\python.exe -c \"\"from src.recognizers import MultiMethodMatcher; print(''Import OK'')\"\"\")",
+      "Bash(cmd /c \"cd /d C:\\Users\\user\\Desktop\\DSPLab\\Final && C:\\Users\\user\\anaconda3\\envs\\dspfp\\python.exe temp\\bench_latency.py\")",
+      "Bash(C:/Users/user/miniconda3/envs/dspfp/python.exe \"C:/Users/user/Desktop/DSPLab/Final/temp/bench_latency.py\")",
+      "Bash(C:/Users/user/miniconda3/envs/dspfp/python.exe:*)",
+      "Bash(move:*)",
+      "Bash(move exp_fast_2.md docs )",
+      "Bash(move exp_log.md docs )",
+      "Bash(move OPTIMIZATION_SUMMARY.md docs )",
+      "Bash(ls:*)",
+      "Bash(C:Usersuseranaconda3envsdspfppython.exe test_arena.py)"
     ],
     "deny": [],
     "ask": []

@@ -83,6 +83,13 @@ def test_live_recognition():
         default=5,
         help="Number of noise samples to collect (default: 5)"
     )
+    parser.add_argument(
+        "--method",
+        type=str,
+        choices=['mfcc_dtw', 'ensemble'],
+        default='ensemble',
+        help="Recognition method: 'mfcc_dtw' (fast, single method) or 'ensemble' (slower, more accurate)"
+    )
     args = parser.parse_args()
 
     # Load templates
@@ -174,7 +181,7 @@ def test_live_recognition():
     vad = VAD(background_rms=bg_rms)
 
     print("\n" + "=" * 80)
-    print("Listening for commands... (Real-time mode)")
+    print(f"Listening for commands... (High-speed mode - {args.method.upper()})")
     print("Say: 開始, 暫停, 跳")
     print("Press Ctrl+C to stop")
     print("=" * 80)
@@ -187,9 +194,6 @@ def test_live_recognition():
             'successful_matches': 0,
             'noise_detections': 0,
             'processing_times': [],
-            'per_method_times': {m: [] for m in matcher.matchers.keys()},
-            'distances': {m: [] for m in matcher.matchers.keys()},
-            'noise_distances': {m: [] for m in matcher.matchers.keys()},
             'vad_latencies': []
         }
 
@@ -198,7 +202,7 @@ def test_live_recognition():
 
         while True:
             # Use smaller timeout for better responsiveness
-            chunk = audio_stream.get_chunk(timeout=0.02)
+            chunk = audio_stream.get_chunk(timeout=0.01)
             if len(chunk) == 0:
                 continue
 
@@ -207,8 +211,8 @@ def test_live_recognition():
             # Track when speech starts
             if state == VADState.RECORDING and last_state == VADState.SILENCE:
                 vad_start_time = time.time()
-                # Show recording indicator
-                print("\r[Recording...]", end='', flush=True)
+                # Show recording indicator on same line
+                print("\r[錄音中...]     ", end='', flush=True)
 
             last_state = state
 
@@ -216,100 +220,37 @@ def test_live_recognition():
                 vad_end_time = time.time()
                 vad_latency = (vad_end_time - vad_start_time) * 1000 if vad_start_time else 0
                 stats['vad_latencies'].append(vad_latency)
-
                 stats['total_detections'] += 1
-                segment_duration = len(segment) / config.SAMPLE_RATE
 
-                # Clear recording indicator and print header
-                print(f"\r" + "=" * 80)
-                print(f"[Detection #{stats['total_detections']}] Duration: {segment_duration:.2f}s | VAD latency: {vad_latency:.0f}ms")
-                print("-" * 80)
-
-                # Process with all methods and measure time for each
+                # Process with selected method
                 total_start = time.time()
-                raw_results = matcher.recognize(segment, mode='all')
+                if args.method == 'mfcc_dtw':
+                    # Use only MFCC+DTW method
+                    results = matcher.recognize(segment, mode='all')
+                    command = results['all_results']['mfcc_dtw']['command']
+                else:
+                    # Use ensemble
+                    results = matcher.recognize(segment, mode='ensemble')
+                    command = results['command']
                 total_proc_time = (time.time() - total_start) * 1000
                 stats['processing_times'].append(total_proc_time)
 
-                # Compute ensemble decision manually
-                best_command = 'NONE'
-                best_confidence = 0.0
-                best_method = None
-                best_template = ''
-                noise_votes = 0
-
-                for method, res in raw_results['all_results'].items():
-                    cmd = res['command']
-                    dist = res['distance']
-                    noise_dist = res.get('noise_distance', float('inf'))
-                    threshold = matcher.matchers[method].threshold
-
-                    stats['distances'][method].append(dist)
-                    if noise_dist < float('inf'):
-                        stats['noise_distances'][method].append(noise_dist)
-
-                    if cmd == 'NOISE':
-                        noise_votes += 1
-                    elif cmd not in ('NONE', 'NOISE'):
-                        conf = 1 - min(dist / threshold, 1)
-                        if conf > best_confidence:
-                            best_confidence = conf
-                            best_command = cmd
-                            best_method = method
-                            best_template = res['best_template']
-
-                # If majority say NOISE, override
-                if noise_votes > len(raw_results['all_results']) // 2:
-                    best_command = 'NOISE'
-
-                # Show detailed results for each method
-                for method, res in raw_results['all_results'].items():
-                    cmd = res['command']
-                    dist = res['distance']
-                    best_tpl = res['best_template']
-                    all_dists = res['all_distances']
-                    noise_dist = res.get('noise_distance', float('inf'))
-                    threshold = matcher.matchers[method].threshold
-
-                    # Calculate margin (how far from threshold)
-                    margin = threshold - dist
-                    margin_pct = (margin / threshold) * 100
-
-                    if cmd == 'NOISE':
-                        status = "NOISE"
-                    elif cmd == 'NONE':
-                        status = "NO MATCH"
-                    else:
-                        status = "MATCH"
-                    conf_pct = max(0, (1 - dist / threshold) * 100)
-
-                    print(f"\n[{method}] {status}")
-                    print(f"  Best match: {best_tpl} (dist={dist:.3f}, conf={conf_pct:.1f}%)")
-                    if noise_dist < float('inf'):
-                        print(f"  Noise dist: {noise_dist:.3f} {'<-- CLOSER' if noise_dist < dist else ''}")
-                    print(f"  Threshold: {threshold:.2f} | Margin: {margin:.2f} ({margin_pct:+.1f}%)")
-
-                    # Show top N closest templates
-                    print(f"  Top {args.top_n} closest templates:")
-                    for i, (tpl_cmd, tpl_name, tpl_dist) in enumerate(all_dists[:args.top_n]):
-                        tpl_margin = threshold - tpl_dist
-                        marker = " <--" if i == 0 else ""
-                        print(f"    {i+1}. {tpl_name:15s} ({tpl_cmd:6s}) dist={tpl_dist:7.3f} margin={tpl_margin:+7.2f}{marker}")
-
-                # Show final decision
-                print()
-                print("-" * 80)
-                if best_command == 'NOISE':
+                # Update stats
+                if command == 'NOISE':
                     stats['noise_detections'] += 1
-                    print(f">>> DECISION: NOISE (rejected - closer to noise templates)")
-                elif best_command != 'NONE':
+                elif command != 'NONE':
                     stats['successful_matches'] += 1
-                    print(f">>> DECISION: {best_command} (by {best_method}, conf={best_confidence*100:.1f}%, template={best_template})")
+
+                # Print result on same line with \r
+                if command == 'NOISE':
+                    display = f"[噪音] #{stats['total_detections']} | 噪音偵測 | 處理時間:{total_proc_time:.0f}ms"
+                elif command == 'NONE':
+                    display = f"[無匹配] #{stats['total_detections']} | 無法識別 | 處理時間:{total_proc_time:.0f}ms"
                 else:
-                    print(f">>> DECISION: NO MATCH (all methods below threshold)")
-                print(f">>> Total processing time: {total_proc_time:.1f}ms")
-                print("=" * 80)
-                print()
+                    display = f"[指令:{command}] #{stats['total_detections']} | 成功識別 | 處理時間:{total_proc_time:.0f}ms"
+
+                # Print with padding to clear previous line
+                print(f"\r{display:<80}", end='', flush=True)
 
                 # Reset VAD
                 vad.reset()
@@ -320,61 +261,35 @@ def test_live_recognition():
     finally:
         audio_stream.stop()
 
-    # Print detailed statistics
+    # Print simple statistics
     print("\n" + "=" * 80)
-    print("Session Statistics (for parameter tuning)")
+    print("Session Statistics")
     print("=" * 80)
 
-    print(f"\n[Overall]")
-    print(f"  Total detections: {stats['total_detections']}")
-    print(f"  Successful matches: {stats['successful_matches']}")
-    print(f"  Noise rejections: {stats['noise_detections']}")
-    print(f"  No match: {stats['total_detections'] - stats['successful_matches'] - stats['noise_detections']}")
+    print(f"\n總偵測次數: {stats['total_detections']}")
+    print(f"成功識別指令: {stats['successful_matches']}")
+    print(f"噪音拒絕: {stats['noise_detections']}")
+    print(f"無匹配: {stats['total_detections'] - stats['successful_matches'] - stats['noise_detections']}")
+
     if stats['total_detections'] > 0:
         match_rate = stats['successful_matches'] / stats['total_detections'] * 100
         noise_rate = stats['noise_detections'] / stats['total_detections'] * 100
-        print(f"  Match rate: {match_rate:.1f}%")
-        print(f"  Noise rejection rate: {noise_rate:.1f}%")
+        print(f"\n指令識別率: {match_rate:.1f}%")
+        print(f"噪音拒絕率: {noise_rate:.1f}%")
 
     if stats['processing_times']:
-        print(f"\n[Processing Time]")
         avg_time = sum(stats['processing_times']) / len(stats['processing_times'])
-        print(f"  Average: {avg_time:.1f}ms")
-        print(f"  Min: {min(stats['processing_times']):.1f}ms")
-        print(f"  Max: {max(stats['processing_times']):.1f}ms")
+        print(f"\n平均處理時間: {avg_time:.1f}ms")
+        print(f"最快: {min(stats['processing_times']):.1f}ms")
+        print(f"最慢: {max(stats['processing_times']):.1f}ms")
 
     if stats['vad_latencies']:
-        print(f"\n[VAD Latency (speech start to segment ready)]")
         avg_lat = sum(stats['vad_latencies']) / len(stats['vad_latencies'])
-        print(f"  Average: {avg_lat:.0f}ms")
-        print(f"  Min: {min(stats['vad_latencies']):.0f}ms")
-        print(f"  Max: {max(stats['vad_latencies']):.0f}ms")
+        print(f"\n平均VAD延遲: {avg_lat:.0f}ms")
+        print(f"最小: {min(stats['vad_latencies']):.0f}ms")
+        print(f"最大: {max(stats['vad_latencies']):.0f}ms")
 
-    # Distance statistics per method (for threshold tuning)
-    print(f"\n[Distance Statistics per Method (for threshold tuning)]")
-    for method in matcher.matchers.keys():
-        dists = stats['distances'].get(method, [])
-        noise_dists = stats['noise_distances'].get(method, [])
-        if dists:
-            threshold = matcher.matchers[method].threshold
-            print(f"\n  {method}:")
-            print(f"    Current threshold: {threshold:.2f}")
-            print(f"    Command distances:")
-            print(f"      Min: {min(dists):.3f}")
-            print(f"      Max: {max(dists):.3f}")
-            print(f"      Avg: {sum(dists)/len(dists):.3f}")
-            if noise_dists:
-                print(f"    Noise distances:")
-                print(f"      Min: {min(noise_dists):.3f}")
-                print(f"      Max: {max(noise_dists):.3f}")
-                print(f"      Avg: {sum(noise_dists)/len(noise_dists):.3f}")
-            # Suggest threshold if needed
-            if min(dists) > threshold:
-                print(f"    Suggestion: Increase threshold (all dists > current threshold)")
-            elif max(dists) < threshold * 0.5:
-                print(f"    Suggestion: Could decrease threshold (all dists < 50% of threshold)")
-
-    print("\n" + "=" * 80)
+    print("=" * 80)
 
 
 if __name__ == '__main__':
