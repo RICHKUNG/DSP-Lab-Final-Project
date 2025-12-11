@@ -15,7 +15,7 @@ PROJECT_ROOT = os.path.dirname(CURRENT_DIR)
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-from src.recognizers import MultiMethodMatcher
+from src.audio.recognizers import MultiMethodMatcher
 
 
 def run():

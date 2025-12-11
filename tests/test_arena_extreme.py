@@ -28,8 +28,8 @@ if _project_root not in sys.path:
 from tests.template_utils import locate_cmd_templates
 
 try:
-    from src.audio_io import load_audio_file
-    from src.recognizers import MultiMethodMatcher
+    from src.audio.io import load_audio_file
+    from src.audio.recognizers import MultiMethodMatcher
     from src import config
     print("Imports successful.")
 except ImportError as e:

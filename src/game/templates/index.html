@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ECG Pulse Runner</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <style>
+        body {
+            margin: 0;
+            background: #000;
+            color: #0f0;
+            font-family: 'Courier New', monospace;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            overflow: hidden;
+        }
+        #monitor {
+            position: relative;
+            width: 90%;
+            max-width: 1000px;
+            height: 600px;
+            background: #020;
+            border: 3px solid #0f0;
+            box-shadow: 0 0 20px #0f080;
+        }
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+            background: #000;
+        }
+        /* UI 文字介面 */
+        .ui-layer {
+            position: absolute;
+            top: 40px;
+            left: 40px;
+            right: 40px;
+            display: flex;
+            justify-content: space-between;
+            z-index: 5;
+            font-size: 24px;
+            font-weight: bold;
+            pointer-events: none;
+        }
+
+        /* Controls Instructions */
+        .controls-box {
+            position: absolute;
+            top: 120px;
+            left: 40px;
+            background: rgba(0, 20, 0, 0.7);
+            border: 1px solid #005500;
+            padding: 25px;
+            color: #aaffaa;
+            font-size: 14px;
+            line-height: 1.8;
+            z-index: 5;
+            pointer-events: none;
+            border-radius: 8px;
+        }
+        .controls-box h3 { margin: 0 0 15px 0; color: #fff; font-size: 16px; border-bottom: 1px solid #005500; padding-bottom: 5px; }
+        .controls-box ul { padding-left: 20px; margin: 0; }
+        .controls-box > div { margin-bottom: 20px; }
+
+        /* 連線狀態指示燈 */
+        #status {
+            position: absolute;
+            bottom: 30px;
+            right: 40px;
+            font-size: 12px;
+            color: #0a0;
+            z-index: 10;
+        }
+        .connected { color: #0f0 !important; }
+
+        /* 除錯區 */
+        #debug-log {
+            position: absolute;
+            bottom: 30px;
+            left: 40px;
+            width: 300px;
+            height: 100px;
+            overflow-y: auto;
+            font-size: 12px;
+            color: #8f8;
+            background: rgba(0,0,0,0.5);
+            border: 1px solid #0f0;
+            padding: 10px;
+            z-index: 10;
+            pointer-events: auto;
+            border-radius: 4px;
+        }
+
+        .overlay {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            background: rgba(0, 20, 0, 0.95);
+            border: 2px solid #0f0;
+            padding: 40px;
+            z-index: 20;
+        }
+        button {
+            background: #0f0;
+            color: #000;
+            border: none;
+            padding: 15px 40px;
+            font-size: 18px;
+            font-weight: bold;
+            cursor: pointer;
+            margin-top: 20px;
+        }
+        button:hover { background: #0d0; }
+        .hidden { display: none !important; }
+    </style>
+</head>
+<body>
+    <div id="monitor">
+        <canvas id="gameCanvas"></canvas>
+
+        <div class="ui-layer">
+            <div style="font-size: 32px; color: #ff3333; text-shadow: 0 0 10px #ff0000;">♥ BPM: <span id="bpm">--</span></div>
+            <div>DIST: <span id="dist">0m</span></div>
+        </div>
+
+        <div class="controls-box">
+            <h3>🎮 遊戲控制 (CONTROLS)</h3>
+            <div style="margin-bottom: 10px;">
+                <strong style="color: #ffff00;">🎤 語音 (Voice):</strong>
+                <ul>
+                    <li><strong>"開始" (START)</strong>: 開始遊戲</li>
+                    <li><strong>"跳" (JUMP)</strong>: 跳躍 (避開障礙)</li>
+                    <li><strong>"暫停" (PAUSE)</strong>: 暫停/繼續</li>
+                </ul>
+            </div>
+            <div>
+                <strong style="color: #00ffff;">⌨️ 鍵盤 (Keyboard):</strong>
+                <ul>
+                    <li><strong>[↑] / [Enter]</strong>: 跳躍 / 開始</li>
+                    <li><strong>[Space]</strong>: 暫停</li>
+                </ul>
+            </div>
+        </div>
+
+        <div id="status">○ WAIT FOR SIGNAL...</div>
+        <div id="debug-log">Debug Log initialized...</div>
+
+        <div id="startScreen" class="overlay">
+            <h1>ECG PULSE RUNNER</h1>
+            <p>語音控制 + ECG 心電圖</p>
+            <p style="font-size: 14px;">
+                語音指令: 開始 / 暫停 / 跳<br>
+                鍵盤: Enter (開始) / ↑ (跳) / Space (暫停)
+            </p>
+            <button onclick="startGame()">START GAME</button>
+        </div>
+
+        <div id="gameOverScreen" class="overlay hidden">
+            <h1 style="color:#f33">GAME OVER</h1>
+            <p>距離: <span id="finalDist"></span>m</p>
+            <button onclick="startGame()">RESTART</button>
+        </div>
+    </div>
+
+    <script>
+        function log(msg) {
+            const el = document.getElementById('debug-log');
+            const line = document.createElement('div');
+            line.textContent = `> ${msg}`;
+            el.appendChild(line);
+            el.scrollTop = el.scrollHeight;
+            console.log(msg);
+        }
+
+        // Socket.IO 連線
+        const socket = io();
+        const statusEl = document.getElementById('status');
+
+        socket.on('connect', () => {
+            statusEl.textContent = '● CONNECTED';
+            statusEl.classList.add('connected');
+            log('Socket connected');
+        });
+
+        socket.on('disconnect', () => {
+            statusEl.textContent = '○ DISCONNECTED';
+            statusEl.classList.remove('connected');
+            log('Socket disconnected');
+        });
+
+        socket.on('connect_error', (error) => {
+            log(`Connection Error: ${error}`);
+        });
+
+        // 遊戲狀態
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        let width, height, centerY;
+        let isRunning = false;
+        let isPaused = false;
+        let score = 0;
+        let gameSpeed = 6;
+        let obstacles = [];
+
+        // 玩家
+        const player = {
+            x: 100,
+            y: 0,
+            size: 20,
+            dy: 0,
+            isOnTop: true,
+            jumpCount: 0,
+            maxJumps: 2,
+
+            update() {
+                const gravityDir = this.isOnTop ? 1 : -1;
+                const groundY = this.isOnTop ? centerY - this.size : centerY;
+
+                this.dy += 0.5 * gravityDir;
+                this.y += this.dy;
+
+                // 落地
+                if (this.isOnTop) {
+                    if (this.y > groundY) {
+                        this.y = groundY;
+                        this.dy = 0;
+                        this.jumpCount = 0;
+                    }
+                } else {
+                    if (this.y < groundY) {
+                        this.y = groundY;
+                        this.dy = 0;
+                        this.jumpCount = 0;
+                    }
+                }
+            },
+
+            draw() {
+                ctx.fillStyle = '#f33';
+                ctx.fillRect(this.x, this.y, this.size, this.size);
+            },
+
+            jump() {
+                if (this.jumpCount < this.maxJumps) {
+                    this.dy = 10 * (this.isOnTop ? -1 : 1);
+                    this.jumpCount++;
+                }
+            }
+        };
+
+        // 障礙物
+        class Obstacle {
+            constructor(dir, height) {
+                this.x = width;
+                this.dir = dir; // 1 (下) 或 -1 (上)
+                this.height = Math.min(Math.max(height, 20), 80); 
+                this.width = 30;
+                this.markedForDeletion = false;
+            }
+
+            update() {
+                this.x -= gameSpeed;
+                if (this.x + this.width < -100) this.markedForDeletion = true;
+            }
+
+            draw() {
+                ctx.fillStyle = '#0f0';
+                if (this.dir === 1) {
+                    // 下方障礙 (向上突起)
+                    ctx.fillRect(this.x, centerY, this.width, this.height);
+                } else {
+                    // 上方障礙 (向下突起)
+                    ctx.fillRect(this.x, centerY - this.height, this.width, this.height);
+                }
+            }
+
+            collidesWith(p) {
+                // 簡易 AABB
+                if (p.x < this.x + this.width && p.x + p.size > this.x) {
+                    if (this.dir === 1) {
+                         // 下方障礙: 玩家碰到中線以下
+                         return (p.y + p.size > centerY);
+                    } else {
+                        // 上方障礙: 玩家碰到中線以上
+                        return (p.y < centerY);
+                    }
+                }
+                return false;
+            }
+        }
+
+        // 接收事件
+        socket.on('spawn_obstacle', (data) => {
+            if (!isRunning || isPaused) return;
+            // log(`Spawn obstacle: ${data.dir}`);
+            obstacles.push(new Obstacle(data.dir, data.height));
+        });
+
+        socket.on('player_action', (data) => {
+            log(`Action received: ${data.action}`);
+            const action = (data.action || '').toUpperCase().trim();
+
+            // 優先處理 START
+            if (action === 'START') {
+                if (!isRunning) startGame();
+                return;
+            }
+
+            if (!isRunning) return;
+
+            if (action === 'JUMP' && !isPaused) {
+                player.jump();
+            } else if (action === 'PAUSE') {
+                isPaused = !isPaused;
+                log(isPaused ? "Game Paused" : "Game Resumed");
+            }
+        });
+
+        socket.on('bpm_update', (data) => {
+            document.getElementById('bpm').textContent = Math.round(data.bpm);
+        });
+
+        // 鍵盤控制
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'ArrowUp') {
+                if (isRunning && !isPaused) player.jump();
+            } else if (e.key === ' ' || e.key === 'p') {
+                isPaused = !isPaused;
+                log("Pause toggle key pressed");
+            } else if (e.key === 'Enter') {
+                if (!isRunning) startGame();
+            }
+        });
+
+        // 初始化
+        function resize() {
+            width = canvas.width = canvas.offsetWidth;
+            height = canvas.height = canvas.offsetHeight;
+            centerY = height / 2;
+            player.y = centerY - player.size;
+        }
+
+        function startGame() {
+            log("Starting Game...");
+            document.getElementById('startScreen').classList.add('hidden');
+            document.getElementById('gameOverScreen').classList.add('hidden');
+
+            isRunning = true;
+            isPaused = false;
+            score = 0;
+            obstacles = [];
+            player.y = centerY - player.size;
+            player.dy = 0;
+            player.jumpCount = 0;
+            player.isOnTop = true; // 重置位置
+
+            gameLoop();
+        }
+
+        function gameOver() {
+            log("Game Over");
+            isRunning = false;
+            document.getElementById('finalDist').textContent = Math.floor(score / 10);
+            document.getElementById('gameOverScreen').classList.remove('hidden');
+        }
+
+        function gameLoop() {
+            if (!isRunning) return;
+
+            // 清空
+            ctx.fillStyle = '#000';
+            ctx.fillRect(0, 0, width, height);
+
+            // 中線
+            ctx.strokeStyle = '#0f0';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(0, centerY);
+            ctx.lineTo(width, centerY);
+            ctx.stroke();
+
+            if (!isPaused) {
+                // 更新
+                player.update();
+                obstacles.forEach(o => o.update());
+                obstacles = obstacles.filter(o => !o.markedForDeletion);
+
+                // 碰撞檢測
+                for (let obs of obstacles) {
+                    if (obs.collidesWith(player)) {
+                        gameOver();
+                        return;
+                    }
+                }
+
+                score++;
+            } else {
+                ctx.fillStyle = "white";
+                ctx.font = "30px Courier New";
+                ctx.fillText("PAUSED", width/2 - 50, height/2 - 40);
+            }
+
+            // 繪製
+            player.draw();
+            obstacles.forEach(o => o.draw());
+
+            document.getElementById('dist').textContent = Math.floor(score / 10) + 'm';
+
+            requestAnimationFrame(gameLoop);
+        }
+
+        window.addEventListener('resize', resize);
+        resize();
+    </script>
+</body>
+</html>

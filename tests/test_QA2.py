@@ -15,9 +15,9 @@ if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
 from tests.template_utils import locate_cmd_templates
-from src.audio_io import AudioStream, find_suitable_device
-from src.vad import VAD, VADState
-from src.recognizers import MultiMethodMatcher
+from src.audio.io import AudioStream, find_suitable_device
+from src.audio.vad import VAD, VADState
+from src.audio.recognizers import MultiMethodMatcher
 from src import config
 
 

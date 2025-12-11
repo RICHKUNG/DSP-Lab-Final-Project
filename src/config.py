@@ -11,7 +11,7 @@ TEMPLATE_DIR = BASE_DIR / "cmd_templates"
 # Audio settings
 SAMPLE_RATE = 16000
 CHANNELS = 1
-CHUNK_SIZE = 512  # ~32ms at 16kHz
+CHUNK_SIZE = 256  # Reduced to ~16ms for lower latency response
 DTYPE = 'int16'
 
 # VAD settings
@@ -24,10 +24,10 @@ VAD_ENERGY_THRESHOLD_MULT_HIGH = 5.0
 # VAD_ENERGY_THRESHOLD_MULT_LOW = 3.5  # Requires signal to be 3.5x louder than background
 # VAD_ENERGY_THRESHOLD_MULT_HIGH = 6.0 # Requires strong speech peak
 
-VAD_MIN_SPEECH_MS = 200
+VAD_MIN_SPEECH_MS = 150
 VAD_MAX_SPEECH_MS = 1500
-VAD_SILENCE_MS = 300  # silence to end recording
-VAD_PRE_ROLL_MS = 100  # pre-roll buffer
+VAD_SILENCE_MS = 150  # Aggressive: Stop recording quickly after speech ends (was 300)
+VAD_PRE_ROLL_MS = 50  # Reduced buffer
 
 # Feature extraction settings
 N_MFCC = 13
@@ -47,7 +47,7 @@ TEMPLATE_FIXED_FRAMES = 50  # for mel template resizing
 STATS_SEGMENTS = 3  # number of segments for stats features
 
 # DTW settings
-DTW_RADIUS = 6  # Increased to 6 to handle speed variations better (e.g., 暫停4.wav)
+DTW_RADIUS = 3  # Reduced for speed (was 6)
 
 # Recognition thresholds
 # Experimentally validated (2025-12-10): Current values are optimal. See docs/EXPERIMENT_NOISE_ROBUSTNESS.md

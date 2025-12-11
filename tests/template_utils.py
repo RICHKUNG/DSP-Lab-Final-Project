@@ -27,18 +27,21 @@ def locate_cmd_templates():
         )
 
     current_dir = os.path.dirname(os.path.abspath(__file__))
-    tests_templates = _resolve_dir(os.path.join(current_dir, "cmd_templates"))
-    if tests_templates:
-        return tests_templates
-
+    
+    # Check project root (parent of tests)
     project_root = os.path.dirname(current_dir)
     project_templates = _resolve_dir(os.path.join(project_root, "cmd_templates"))
     if project_templates:
         return project_templates
 
+    # Fallback to checking local dir (though less likely)
+    tests_templates = _resolve_dir(os.path.join(current_dir, "cmd_templates"))
+    if tests_templates:
+        return tests_templates
+
     raise FileNotFoundError(
         "Could not locate cmd_templates. Checked "
-        f"'{os.path.join(current_dir, 'cmd_templates')}' and "
-        f"'{os.path.join(project_root, 'cmd_templates')}'. "
+        f"'{os.path.join(project_root, 'cmd_templates')}' and "
+        f"'{os.path.join(current_dir, 'cmd_templates')}'. "
         "Set CMD_TEMPLATES_DIR to the correct directory."
     )

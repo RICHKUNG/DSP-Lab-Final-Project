@@ -12,9 +12,9 @@ _project_root = os.path.dirname(_current_dir)
 if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
-from src.audio_io import AudioStream, find_suitable_device
-from src.vad import VAD, VADState
-from src.recognizers import MultiMethodMatcher
+from src.audio.io import AudioStream, find_suitable_device
+from src.audio.vad import VAD, VADState
+from src.audio.recognizers import MultiMethodMatcher
 from src import config
 
 
@@ -97,7 +97,8 @@ def test_live_recognition():
     args = parser.parse_args()
 
     # Load templates
-    base_dir = os.path.dirname(os.path.abspath(__file__))
+    base_dir = os.path.join(_project_root, "cmd_templates")
+    print(f"Loading templates from: {base_dir}")
     
     # Configure matcher based on method
     if args.method == 'mfcc_dtw':
