@@ -21,6 +21,7 @@ class VAD:
         self._speech_buffer = []
         self._silence_frames = 0
         self._speech_frames = 0
+        self._adaptation_rate = 0.05  # Slow adaptation rate (was 0.01, increased for responsiveness)
 
         # Calculate frame counts
         self._min_speech_frames = int(config.VAD_MIN_SPEECH_MS * config.SAMPLE_RATE / 1000 / config.CHUNK_SIZE)
@@ -69,6 +70,17 @@ class VAD:
                 self._speech_buffer = [chunk.copy()]
                 self._speech_frames = 1
                 self._silence_frames = 0
+            else:
+                # Adapt background noise level when silent
+                # Only adapt if energy is reasonable (not 0) and lower than current background (downward)
+                # or slightly higher but still below threshold (upward drift)
+                if energy > 0:
+                    self.background_rms = (
+                        (1 - self._adaptation_rate) * self.background_rms + 
+                        self._adaptation_rate * energy
+                    )
+                    self.background_rms = max(self.background_rms, 50.0) # floor
+
             return (self.state, None)
 
         elif self.state == VADState.RECORDING:
@@ -81,7 +93,12 @@ class VAD:
                 self._silence_frames += 1
 
             # Check for end of speech or max length
-            if self._silence_frames >= self._silence_frames_threshold or \
+            dynamic_silence_threshold = self._silence_frames_threshold
+            if self._speech_frames >= self._min_speech_frames:
+                # After minimum speech is reached, use a shorter hangover to cut latency
+                dynamic_silence_threshold = max(2, self._silence_frames_threshold // 2)
+
+            if self._silence_frames >= dynamic_silence_threshold or \
                self._speech_frames >= self._max_speech_frames:
 
                 # Check minimum length

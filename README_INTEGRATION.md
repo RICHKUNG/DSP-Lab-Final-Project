@@ -148,9 +148,9 @@ C:\Users\user\Desktop\DSPLab\Final/
 - **功能**: 整合音訊輸入、VAD、特徵提取、辨識
 - **位置**: `src/audio/controller.py`
 - **辨識方法**:
-  - `mfcc_dtw` - 僅 MFCC（最快 ~160ms）
+  - `mfcc_dtw` - 僅 MFCC（預設，最快 ~160ms）
   - `ensemble` - 固定權重 Ensemble
-  - `adaptive_ensemble` - SNR 自適應（預設，最準 97.9%）
+  - `adaptive_ensemble` - SNR 自適應（最準 97.9%，需環境校準）
 - **準確率**: 97.9% (Adaptive Ensemble)
 - **支援指令**: START, PAUSE, JUMP
 

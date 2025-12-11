@@ -16,17 +16,17 @@ DTYPE = 'int16'
 
 # VAD settings
 # --- Default (Quiet/Normal Environment) ---
-VAD_ENERGY_THRESHOLD_MULT_LOW = 2.0
-VAD_ENERGY_THRESHOLD_MULT_HIGH = 5.0
+VAD_ENERGY_THRESHOLD_MULT_LOW = 1.6   # More sensitive start trigger
+VAD_ENERGY_THRESHOLD_MULT_HIGH = 3.5  # Faster to consider speech active
 
 # --- NOISY Environment Presets (Uncomment to use for deployment) ---
 # If the background is loud, increase these to prevent VAD from triggering on background chatter.
 # VAD_ENERGY_THRESHOLD_MULT_LOW = 3.5  # Requires signal to be 3.5x louder than background
 # VAD_ENERGY_THRESHOLD_MULT_HIGH = 6.0 # Requires strong speech peak
 
-VAD_MIN_SPEECH_MS = 150
+VAD_MIN_SPEECH_MS = 120
 VAD_MAX_SPEECH_MS = 1500
-VAD_SILENCE_MS = 150  # Aggressive: Stop recording quickly after speech ends (was 300)
+VAD_SILENCE_MS = 80   # Faster hangover to cut latency
 VAD_PRE_ROLL_MS = 50  # Reduced buffer
 
 # Feature extraction settings
@@ -49,16 +49,22 @@ STATS_SEGMENTS = 3  # number of segments for stats features
 # DTW settings
 DTW_RADIUS = 3  # Reduced for speed (was 6)
 
-# Recognition thresholds
-# Experimentally validated (2025-12-10): Current values are optimal. See docs/EXPERIMENT_NOISE_ROBUSTNESS.md
-THRESHOLD_MFCC_DTW = 140.0  # Optimal threshold (validated via arena testing)
+# Recognition thresholds (tuned for higher sensitivity in-game)
+THRESHOLD_MFCC_DTW = 160.0  # Slightly looser to avoid false negatives on quiet speech
 THRESHOLD_STATS = 600.0     # Increased due to more features (deltas+ZCR)
-THRESHOLD_MEL = 0.50        # Cosine distance - Optimized for a balance of no_match and wrong_command
-THRESHOLD_LPC = 100.0       # FastLPCMatcher - Balanced (tested: 80 too loose, 120 too strict)
+THRESHOLD_MEL = 0.60        # Cosine distance - allow more variation to improve hit rate
+THRESHOLD_LPC = 110.0       # FastLPCMatcher - Balanced (tested: 80 too loose, 120 too strict)
 THRESHOLD_RASTA_PLP = 140.0 # RASTA-PLP Matcher
 
 # Command list
 COMMANDS = ['START', 'PAUSE', 'JUMP', 'MAGNET', 'INVERT']
+
+# Voice Recognition Strategy Settings
+# Options:
+# - 'adaptive_ensemble': Best accuracy (97.9%). Uses SNR to weight methods.
+# - 'mfcc_dtw': Fast, standard DTW. Good for clean environments.
+# - 'ensemble': Fixed-weight ensemble (MFCC+Mel+LPC).
+DEFAULT_VOICE_METHOD = 'mfcc_dtw'
 
 # Chinese command mapping (for template files)
 COMMAND_MAPPING = {

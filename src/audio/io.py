@@ -183,7 +183,8 @@ class AudioStream:
     def __init__(self, device_index=None, input_rate=None, target_rate=None):
         self._stream = None
         self._ring_buffer = RingBuffer()
-        self._output_queue = queue.Queue()
+        # Limit queue to ~8 seconds of audio (500 chunks * 16ms) to prevent infinite lag
+        self._output_queue = queue.Queue(maxsize=500)
         self._running = False
         self._background_rms = None
         self._device_index = device_index
@@ -223,7 +224,18 @@ class AudioStream:
         samples = self._resample_to_target(samples)
         
         self._ring_buffer.append(samples)
-        self._output_queue.put(samples.copy())
+        
+        # Put in queue (drop oldest if full)
+        try:
+            self._output_queue.put_nowait(samples.copy())
+        except queue.Full:
+            try:
+                # Remove oldest item
+                self._output_queue.get_nowait()
+                # Try putting again
+                self._output_queue.put_nowait(samples.copy())
+            except (queue.Empty, queue.Full):
+                pass # Should be rare race condition, ignore
 
     def start(self):
         """Start audio stream."""

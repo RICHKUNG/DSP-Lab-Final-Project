@@ -37,9 +37,9 @@ def main():
     parser.add_argument('--no-voice', action='store_true',
                         help='停用語音模組')
     parser.add_argument('--voice-method', type=str,
-                        default='adaptive_ensemble',
+                        default=config.DEFAULT_VOICE_METHOD,
                         choices=['mfcc_dtw', 'ensemble', 'adaptive_ensemble'],
-                        help='語音辨識方法 (預設: adaptive_ensemble)')
+                        help=f'語音辨識方法 (預設: {config.DEFAULT_VOICE_METHOD})')
     parser.add_argument('--web-port', type=int, default=5000,
                         help='網頁伺服器埠號 (預設: 5000)')
 

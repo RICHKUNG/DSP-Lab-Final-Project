@@ -6,6 +6,7 @@ VoiceController - 語音辨識控制器
 import threading
 import queue
 import time
+import numpy as np
 from typing import Optional
 from pathlib import Path
 
@@ -226,15 +227,24 @@ class VoiceController:
                     # 辨識
                     start_time = time.time()
 
+                    # Calculate SNR using VAD background estimation
+                    sig_rms = np.sqrt(np.mean(segment.astype(np.float32) ** 2))
+                    noise_rms = self._vad.background_rms
+                    
+                    if noise_rms > 0 and sig_rms > noise_rms:
+                        snr = 20 * np.log10(sig_rms / noise_rms)
+                    else:
+                        snr = 0.0
+
                     if self.method == 'mfcc_dtw':
                         # 僅使用 MFCC
-                        result = self._matcher.recognize(segment, mode='mfcc_dtw')
+                        result = self._matcher.recognize(segment, mode='best', adaptive=False, methods=['mfcc_dtw'])
                     elif self.method == 'ensemble':
                         # 固定權重 Ensemble
                         result = self._matcher.recognize(segment, mode='best', adaptive=False)
                     else:  # adaptive_ensemble
                         # SNR 自適應 Ensemble
-                        result = self._matcher.recognize(segment, mode='best', adaptive=True)
+                        result = self._matcher.recognize(segment, mode='best', adaptive=True, known_snr=snr)
 
                     latency = (time.time() - start_time) * 1000  # ms
 
@@ -252,17 +262,18 @@ class VoiceController:
                                 'action': action,
                                 'confidence': conf,
                                 'method': self.method,
-                                'latency_ms': latency
+                                'latency_ms': latency,
+                                'snr': snr
                             }
                         ))
 
                         # 加入輪詢佇列
                         self._command_queue.put(action)
 
-                        print(f"[Voice] {cmd} (conf={conf:.2f}, {latency:.1f}ms)")
+                        print(f"[Voice] {cmd} (conf={conf:.2f}, {latency:.1f}ms, SNR={snr:.1f}dB)")
                     else:
                         # 噪音事件
-                        self.event_bus.publish(Event(EventType.VOICE_NOISE, {}))
+                        self.event_bus.publish(Event(EventType.VOICE_NOISE, {'snr': snr}))
 
                     # 重置 VAD
                     self._vad.reset()

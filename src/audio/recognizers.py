@@ -330,7 +330,7 @@ class MultiMethodMatcher:
             return len(matcher.noise_templates)
         return 0
 
-    def recognize(self, audio: np.ndarray, mode: str = 'best', adaptive: bool = False) -> Dict:
+    def recognize(self, audio: np.ndarray, mode: str = 'best', adaptive: bool = False, methods: List[str] = None, known_snr: float = None) -> Dict:
         """
         Recognize using all methods.
 
@@ -338,10 +338,23 @@ class MultiMethodMatcher:
             audio: Audio samples
             mode: 'best' returns only best result, 'all' returns all results
             adaptive: Whether to use SNR-adaptive weighting
+            methods: Optional subset of matcher names to evaluate (default: all)
+            known_snr: Optional known SNR to use instead of estimating it
 
         Returns:
             Dict with recognition results
         """
+        # Limit active methods if requested
+        active_methods = methods or list(self.matchers.keys())
+        active_methods = [m for m in active_methods if m in self.matchers]
+        if not active_methods:
+            active_methods = list(self.matchers.keys())
+
+        # Allow legacy mode flag to force MFCC-only fast path
+        if mode == 'mfcc_dtw':
+            active_methods = ['mfcc_dtw']
+            mode = 'best'
+
         # 1. Preprocess audio ONCE
         processed_audio = preprocess_audio(audio)
         
@@ -351,13 +364,13 @@ class MultiMethodMatcher:
         # We know we need MFCC, MEL, LPC. Stats is disabled.
         # But to be safe with the 'methods' list, we check.
         
-        if 'mfcc_dtw' in self.matchers:
+        if 'mfcc_dtw' in active_methods:
             feature_cache['mfcc_dtw'] = extract_mfcc(processed_audio)
 
-        if 'mel' in self.matchers:
+        if 'mel' in active_methods:
             feature_cache['mel'] = extract_mel_template(processed_audio)
 
-        if 'rasta_plp' in self.matchers:
+        if 'rasta_plp' in active_methods:
             feature_cache['rasta_plp'] = extract_rasta_plp(processed_audio)
 
         # For LPC with FastLPCMatcher, let it handle feature extraction internally
@@ -367,7 +380,10 @@ class MultiMethodMatcher:
         # Skip 'stats' feature extraction entirely (saving time)
         
         results = {}
-        for method, matcher in self.matchers.items():
+        for method in active_methods:
+            matcher = self.matchers.get(method)
+            if matcher is None:
+                continue
             # Skip stats execution
             if method == 'stats':
                 results[method] = {
@@ -396,7 +412,10 @@ class MultiMethodMatcher:
         # Adaptive Weighting Logic
         snr = 50.0  # Default to clean
         if adaptive:
-            snr = estimate_snr(audio)
+            if known_snr is not None:
+                snr = known_snr
+            else:
+                snr = estimate_snr(audio)
             weights = get_adaptive_weights(snr)
         else:
              # Default Ensemble Weights
@@ -495,7 +514,7 @@ class MultiMethodMatcher:
         
         return response
 
-    def recognize_voting(self, audio: np.ndarray, adaptive: bool = True) -> Dict:
+    def recognize_voting(self, audio: np.ndarray, adaptive: bool = True, known_snr: float = None) -> Dict:
         """
         Recognize using Weighted Majority Voting (Hard Voting).
         
@@ -505,6 +524,7 @@ class MultiMethodMatcher:
         Args:
             audio: Audio samples
             adaptive: Whether to use SNR-adaptive voting weights
+            known_snr: Optional known SNR to use instead of estimating it
         """
         # 1. Standard extraction
         processed_audio = preprocess_audio(audio)
@@ -535,7 +555,10 @@ class MultiMethodMatcher:
         # 3. Determine Weights
         snr = 50.0
         if adaptive:
-             snr = estimate_snr(audio)
+             if known_snr is not None:
+                 snr = known_snr
+             else:
+                 snr = estimate_snr(audio)
              weights = get_adaptive_weights(snr)
         else:
              weights = {'mfcc_dtw': 4.0, 'mel': 2.5, 'lpc': 1.0, 'stats': 0.0}

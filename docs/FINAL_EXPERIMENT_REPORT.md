@@ -82,9 +82,10 @@ else: (Noisy < 15dB)
 
 ## 📝 Recommendations for Deployment
 
-1.  **Default Mode**: Use **`adaptive_ensemble`** for all PC/Server deployments. The overhead is negligible (~145ms total latency), and robustness is unmatched.
-2.  **Low Power Mode**: Use **`mfcc`** only if running on microcontroller (ESP32/Arduino) where CPU is very limited.
-3.  **Template Management**: The system is now robust enough that the current templates (Start1, Pause1, Jump[1-4]) are sufficient. **Action Item**: Record `Magnet` and `Invert` to complete the set.
+1.  **Default Mode**: Use **`mfcc_dtw`** as the application default. It provides the best balance of speed and stability for general users without requiring strict SNR calibration.
+2.  **High Noise Mode**: Use **`adaptive_ensemble`** for environments with variable or high noise. While technically superior in accuracy (97.9%), it relies on accurate SNR estimation which can be tricky in changing conditions.
+3.  **Low Power Mode**: Use **`mfcc`** only if running on microcontroller (ESP32/Arduino) where CPU is very limited.
+4.  **Template Management**: The system is now robust enough that the current templates (Start1, Pause1, Jump[1-4]) are sufficient. **Action Item**: Record `Magnet` and `Invert` to complete the set.
 
 ---
 
