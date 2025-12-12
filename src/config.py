@@ -58,7 +58,7 @@ THRESHOLD_RASTA_PLP = 280.0 # RASTA-PLP Matcher
 THRESHOLD_RAW_DTW = 0.020  # Raw audio DTW (downsampled 16x, normalized distance)
 
 # Command list
-COMMANDS = ['START', 'PAUSE', 'JUMP', 'MAGNET', 'INVERT']
+COMMANDS = ['START', 'PAUSE', 'JUMP', 'FLIP']
 
 # Voice Recognition Strategy Settings
 # Options:
@@ -70,8 +70,11 @@ DEFAULT_VOICE_METHOD = 'mfcc_dtw'
 # Chinese command mapping (for template files)
 COMMAND_MAPPING = {
     '開始': 'START',
+    'start': 'START',
     '暫停': 'PAUSE',
+    'pause': 'PAUSE',
     '跳': 'JUMP',
-    '磁鐵': 'MAGNET',
-    '反轉': 'INVERT',
+    'jump': 'JUMP',
+    '翻': 'FLIP',
+    'flip': 'FLIP',
 }

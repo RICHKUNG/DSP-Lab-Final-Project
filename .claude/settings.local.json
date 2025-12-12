@@ -31,7 +31,11 @@
       "Bash(C:Usersuserminiconda3envsdspfppython.exe \"C:\\Users\\user\\Desktop\\DSPLab\\Final\\temp\\test_imports_simple.py\")",
       "Bash(/c/Users/user/miniconda3/envs/dspfp/python.exe:*)",
       "Bash(/c/Users/user/miniconda3/envs/dspfp/python:*)",
-      "Bash(cmd /c \"C:\\Users\\user\\miniconda3\\condabin\\conda.bat run -n dspfp python -c \"\"from src.ecg.manager import ECGManager; print(''Import successful'')\"\"\")"
+      "Bash(cmd /c \"C:\\Users\\user\\miniconda3\\condabin\\conda.bat run -n dspfp python -c \"\"from src.ecg.manager import ECGManager; print(''Import successful'')\"\"\")",
+      "Bash(cmd /c \"cd /d C:\\Users\\user\\Desktop\\DSPLab\\Final && C:\\Users\\user\\anaconda3\\envs\\dspfp\\python.exe temp\\test_adapter_refactored.py\")",
+      "Bash(cmd /c \"cd /d C:\\Users\\user\\Desktop\\DSPLab\\Final && C:\\Users\\user\\anaconda3\\envs\\dspfp\\python.exe -m py_compile src\\ecg\\adapter.py\")",
+      "Bash(cmd /c \"cd /d C:\\Users\\user\\Desktop\\DSPLab\\Final && C:\\Users\\user\\anaconda3\\envs\\dspfp\\python.exe temp\\test_import.py 2>&1\")",
+      "Bash(C:Usersuseranaconda3envsdspfppython.exe C:UsersuserDesktopDSPLabFinaltemptest_import.py)"
     ],
     "deny": [],
     "ask": []

@@ -114,8 +114,9 @@ class ECGProcessor:
         new_bpm = self._detect_peak(out_mwi)
         if new_bpm is not None:
             self.bpm = new_bpm
-
-        return self.bpm, out3   # 回傳：BPM 與 濾波後訊號
+            return new_bpm, out3   # 有新峰值：返回新 BPM
+        else:
+            return None, out3      # 無新峰值：返回 None
 
     # ----------------------
     def _detect_peak(self, mwi_batch):

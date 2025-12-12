@@ -35,14 +35,14 @@ def main():
                         help='ECG Serial Port (預設: 自動偵測)')
     parser.add_argument('--no-ecg', action='store_true',
                         help='停用 ECG 模組')
-    parser.add_argument('--bpm-threshold', type=float, default=40.0,
-                        help='BPM 低於此值時切換到假訊號 (預設: 40)')
+    parser.add_argument('--bpm-threshold', type=float, default=-10.0,
+                        help='BPM 低於此值時切換到假訊號 (預設: -10，幾乎不觸發)')
     parser.add_argument('--bpm-recovery', type=float, default=50.0,
                         help='BPM 高於此值時恢復真實訊號 (預設: 50)')
     parser.add_argument('--fallback-bpm', type=float, default=75.0,
                         help='假訊號的 BPM (預設: 75)')
-    parser.add_argument('--retry-interval', type=float, default=2.0,
-                        help='Fallback 模式下重試真實 ECG 的間隔秒數 (預設: 2)')
+    parser.add_argument('--retry-interval', type=float, default=10.0,
+                        help='Fallback 模式下重試真實 ECG 的間隔秒數 (預設: 10)')
     parser.add_argument('--no-voice', action='store_true',
                         help='停用語音模組')
     parser.add_argument('--voice-method', type=str,

@@ -444,6 +444,7 @@ def load_templates_from_dir(
     def handle_file(audio_path: Path):
         nonlocal templates_loaded, noise_loaded
         stem = audio_path.stem
+        stem_lower = stem.lower()
 
         # 噪音檔
         if noise_decider(stem):
@@ -454,9 +455,11 @@ def load_templates_from_dir(
             print(f"Loaded noise template: {audio_path.name}")
             return
 
-        # 指令模板
-        for cn_cmd, en_cmd in command_mapping.items():
-            if stem.startswith(cn_cmd) or cn_cmd in stem:
+        # 指令模板 - 支援中英文指令開頭 (不區分大小寫)
+        for cmd_prefix, en_cmd in command_mapping.items():
+            cmd_prefix_lower = cmd_prefix.lower()
+            if stem.startswith(cmd_prefix) or cmd_prefix in stem or \
+               stem_lower.startswith(cmd_prefix_lower) or cmd_prefix_lower in stem_lower:
                 audio = load_audio_file(str(audio_path))
                 audio = trim_silence(audio)
                 add_template(en_cmd, audio, audio_path.name)

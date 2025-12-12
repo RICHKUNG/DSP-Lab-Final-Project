@@ -1,4 +1,7 @@
-from ecg_reader import ECGProcessor
+import sys
+sys.path.insert(0, 'C:/Users/user/Desktop/DSPLab/Final')
+
+from src.ecg.ecg_reader import ECGProcessor
 import time
 
 proc = ECGProcessor(port="COM4")

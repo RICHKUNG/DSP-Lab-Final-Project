@@ -41,8 +41,7 @@ class VoiceController:
         'START': 'START',
         'PAUSE': 'PAUSE',
         'JUMP': 'JUMP',
-        'MAGNET': 'MAGNET',  # 暫用鍵盤
-        'INVERT': 'INVERT',  # 暫用鍵盤
+        'FLIP': 'FLIP',
     }
 
     def __init__(
