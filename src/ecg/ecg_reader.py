@@ -12,7 +12,7 @@ class ECGProcessor:
         self.ser.reset_input_buffer()
 
         # --- Basic parameters ---
-        self.fs = fs
+        self.fs = int(fs)  # Ensure fs is integer for slice indexing
         self.dt = 1.0 / fs
 
         # Buffers

@@ -7,7 +7,7 @@ import threading
 import time
 import numpy as np
 from collections import deque
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Callable
 from scipy import signal as sp_signal
 
 try:
@@ -128,21 +128,30 @@ class ECGManager:
 
     def _init_peak_detector(self) -> None:
         """初始化峰值偵測器"""
-        # Refractory Period: 250ms
+        # Refractory Period: 250ms (與 ecg_reader.py 一致)
         self.refractory_samples = int(0.25 * self.sample_rate)
         self.last_peak_counter = -self.refractory_samples
         self.sample_counter = 0
 
         # 歷史資料
-        self.mwi_history = deque(maxlen=int(2 * self.sample_rate))
-        self.ma1_history = deque(maxlen=int(0.05 * self.sample_rate))
+        buffer_len = int(3 * self.sample_rate)  # 3 秒緩衝
+        self.mwi_history = deque([0] * buffer_len, maxlen=buffer_len)
+        self.sig_history = deque([0] * buffer_len, maxlen=buffer_len)  # 儲存濾波後訊號
 
         # R-R 間隔歷史 (用於 BPM)
         self.rr_history = deque(maxlen=5)
         self.last_peak_time = 0.0
+        self.peak_history = []  # 峰值位置歷史
 
-        # 前3個樣本（用於局部極大值偵測）
-        self.prev_mwi = [0, 0, 0]
+        # 動態閾值與基線 (與 ecg_reader.py 一致)
+        self.threshold = -10
+        self.signal_mean = 120
+
+        # 搜尋窗口 (回推尋找 R 波)
+        self.search_window = int(0.1 * self.sample_rate)
+
+        # BPM
+        self.bpm = 0
 
     def start(self) -> None:
         """啟動 ECG 處理"""
@@ -341,38 +350,48 @@ class ECGManager:
 
     def _process_sample(self, raw_value: float) -> Dict[str, Any]:
         """
-        處理單一樣本（濾波 + 峰值偵測）
+        處理單一樣本（完整濾波鏈 + 峰值偵測）
+
+        Filter chain: Notch -> LowPass -> MA1 -> Diff -> Square -> MWI
 
         Returns:
-            Dict: {'ma1': ..., 'mwi': ..., 'is_peak': bool, 'amplitude': ..., 'bpm': ...}
+            Dict: {'sig': ..., 'mwi': ..., 'is_peak': bool, 'amplitude': ..., 'bpm': ...}
         """
         self.sample_counter += 1
 
-        # 1. MA1 平滑
+        # 完整濾波鏈
         x = np.array([raw_value])
-        out_ma1, self.zi_ma1 = sp_signal.lfilter(self.b_ma1, 1, x, zi=self.zi_ma1)
-        ma1_value = out_ma1[0]
-        self.ma1_history.append(ma1_value)
 
-        # 2. 差分
+        # 1. Notch filter (60 Hz)
+        out_notch, self.zi_notch = sp_signal.lfilter(self.b_notch, self.a_notch, x, zi=self.zi_notch)
+
+        # 2. Low-pass filter (40 Hz)
+        out_lp, self.zi_lp = sp_signal.lfilter(self.b_lp, self.a_lp, out_notch, zi=self.zi_lp)
+
+        # 3. MA1 平滑
+        out_ma1, self.zi_ma1 = sp_signal.lfilter(self.b_ma1, 1, out_lp, zi=self.zi_ma1)
+        sig_value = out_ma1[0]
+        self.sig_history.append(sig_value)
+
+        # 4. 差分
         out_diff, self.zi_diff = sp_signal.lfilter(self.b_diff, 1, out_ma1, zi=self.zi_diff)
 
-        # 3. 平方
+        # 5. 平方
         out_sq = out_diff ** 2
 
-        # 4. MWI
+        # 6. MWI
         out_mwi, self.zi_mwi = sp_signal.lfilter(self.b_mwi, 1, out_sq, zi=self.zi_mwi)
         mwi_value = out_mwi[0]
         self.mwi_history.append(mwi_value)
 
-        # 更新前3個樣本
-        self.prev_mwi = [self.prev_mwi[1], self.prev_mwi[2], mwi_value]
+        # 更新基線
+        self.signal_mean = 0.99 * self.signal_mean + 0.01 * sig_value
 
-        # 5. 峰值偵測
+        # 7. 峰值偵測
         is_peak, amplitude, bpm = self._detect_peak()
 
         return {
-            'ma1': ma1_value,
+            'sig': sig_value,
             'mwi': mwi_value,
             'is_peak': is_peak,
             'amplitude': amplitude,
@@ -381,53 +400,73 @@ class ECGManager:
 
     def _detect_peak(self) -> tuple:
         """
-        偵測 R 波峰值
+        偵測 R 波峰值（進階版本，含搜尋窗口與基線檢查）
 
         Returns:
             (is_peak: bool, amplitude: float, bpm: float)
         """
-        # 計算動態閾值
-        if len(self.mwi_history) > 10:
-            local_max = max(self.mwi_history)
-            threshold = max(0.6 * local_max, 20)
-        else:
-            threshold = 20
+        # 需要至少3個樣本進行峰值檢測
+        if self.sample_counter < 3:
+            return False, 0.0, self.bpm
+
+        # 動態閾值更新（每50個樣本）
+        if self.sample_counter % 50 == 0 and len(self.mwi_history) > int(self.sample_rate):
+            recent = list(self.mwi_history)[-int(self.sample_rate):]
+            if recent:
+                self.threshold = 0.5 * max(recent)
+                if self.threshold < 20:
+                    self.threshold = 20
 
         # 檢查 Refractory Period
         if (self.sample_counter - self.last_peak_counter) <= self.refractory_samples:
-            return False, 0.0, 0.0
+            return False, 0.0, self.bpm
 
-        # 局部極大值偵測
-        is_peak = (
-            self.prev_mwi[1] > threshold and
-            self.prev_mwi[1] > self.prev_mwi[2] and
-            self.prev_mwi[1] > self.prev_mwi[0]
-        )
+        # 取得最近3個 MWI 值 (prev, curr, next)
+        mwi_buf = list(self.mwi_history)
+        if len(mwi_buf) < 3:
+            return False, 0.0, self.bpm
 
-        if not is_peak:
-            return False, 0.0, 0.0
+        prev = mwi_buf[-3]
+        curr = mwi_buf[-2]
+        nextv = mwi_buf[-1]
 
-        # 找到峰值 - 計算 BPM
-        current_time = self.sample_counter / self.sample_rate
+        # 三點局部極大值檢測
+        if curr > self.threshold and curr > prev and curr > nextv:
+            # 在原始訊號上找 R 波振幅
+            sig_buf = list(self.sig_history)
 
-        bpm = 0.0
-        if self.last_peak_time > 0:
-            rr_interval = current_time - self.last_peak_time
-            # 有效 R-R 範圍: 0.25-2.0 秒 (30-240 BPM)
-            if 0.25 < rr_interval < 2.0:
-                self.rr_history.append(rr_interval)
+            # 簡化：直接使用當前訊號附近的最大值
+            if len(sig_buf) >= self.search_window:
+                start_idx = len(sig_buf) - self.search_window
+                search_region = sig_buf[start_idx:]
+            else:
+                search_region = sig_buf
 
-        if len(self.rr_history) > 0:
-            avg_rr = np.mean(self.rr_history)
-            bpm = 60.0 / avg_rr
+            if len(search_region) > 0:
+                local_max = max(search_region)
 
-        self.last_peak_time = current_time
-        self.last_peak_counter = self.sample_counter
+                # 基線檢查 (與 ecg_reader.py 一致)
+                if local_max > self.signal_mean + 20:
+                    self.last_peak_counter = self.sample_counter
+                    self.peak_history.append(self.sample_counter)
 
-        # 取得 R 波振幅（從 MA1 訊號）
-        amplitude = max(self.ma1_history) if self.ma1_history else self.prev_mwi[1]
+                    # 計算 BPM
+                    new_bpm = None
+                    if len(self.peak_history) >= 2:
+                        rr_samples = self.peak_history[-1] - self.peak_history[-2]
+                        rr_interval = rr_samples / self.sample_rate
 
-        return True, amplitude, bpm
+                        # 有效 R-R 範圍: 0.4-1.5 秒 (40-150 BPM)
+                        if 0.4 < rr_interval < 1.5:
+                            self.rr_history.append(rr_interval)
+                            new_bpm = 60.0 / np.mean(self.rr_history)
+
+                    if new_bpm is not None:
+                        self.bpm = new_bpm
+
+                    return True, local_max, self.bpm
+
+        return False, 0.0, self.bpm
 
     def _processing_loop(self) -> None:
         """主要處理迴圈"""

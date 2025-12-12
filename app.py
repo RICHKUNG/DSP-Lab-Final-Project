@@ -9,7 +9,7 @@ import sys
 import time
 
 from src.event_bus import EventBus
-from src.ecg import ECGManager
+from src.ecg import ECGAdapter
 from src.audio.controller import VoiceController
 from src.game import GameServer
 from src import config
@@ -35,6 +35,14 @@ def main():
                         help='ECG Serial Port (預設: 自動偵測)')
     parser.add_argument('--no-ecg', action='store_true',
                         help='停用 ECG 模組')
+    parser.add_argument('--bpm-threshold', type=float, default=40.0,
+                        help='BPM 低於此值時切換到假訊號 (預設: 40)')
+    parser.add_argument('--bpm-recovery', type=float, default=50.0,
+                        help='BPM 高於此值時恢復真實訊號 (預設: 50)')
+    parser.add_argument('--fallback-bpm', type=float, default=75.0,
+                        help='假訊號的 BPM (預設: 75)')
+    parser.add_argument('--retry-interval', type=float, default=2.0,
+                        help='Fallback 模式下重試真實 ECG 的間隔秒數 (預設: 2)')
     parser.add_argument('--no-voice', action='store_true',
                         help='停用語音模組')
     parser.add_argument('--voice-method', type=str,
@@ -67,7 +75,18 @@ def main():
         # 啟動 ECG 模組
         if not args.no_ecg:
             print(f"\n[Main] Initializing ECG module (port={args.ecg_port or 'auto'})")
-            ecg_manager = ECGManager(port=args.ecg_port, event_bus=event_bus)
+            print(f"[Main]   BPM threshold: {args.bpm_threshold} (switch to fallback)")
+            print(f"[Main]   BPM recovery: {args.bpm_recovery} (switch back to real)")
+            print(f"[Main]   Fallback BPM: {args.fallback_bpm}")
+            print(f"[Main]   Retry interval: {args.retry_interval}s")
+            ecg_manager = ECGAdapter(
+                port=args.ecg_port,
+                event_bus=event_bus,
+                bpm_threshold=args.bpm_threshold,
+                bpm_recovery=args.bpm_recovery,
+                fallback_bpm=args.fallback_bpm,
+                retry_interval=args.retry_interval
+            )
             try:
                 ecg_manager.start()
                 print("[Main] ✓ ECG module started")

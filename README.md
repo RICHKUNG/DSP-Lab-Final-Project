@@ -54,8 +54,46 @@ python app.py
 | **暫停** | "暫停" (PAUSE) | **[Space] 空白鍵** | 暫停/繼續遊戲 |
 
 #### ❤️ ECG 模組
-- **自動偵測**: 系統會優先尋找 Arduino 裝置。
-- **模擬模式**: 若找不到硬體，會自動切換至模擬模式，產生約 75 BPM 的虛擬心跳訊號，確保遊戲可玩。
+
+**連接與動態 Fallback**
+- **自動偵測**: 系統會優先尋找 Arduino 裝置並使用真實 ECG 訊號。
+- **動態切換 Fallback**: 智能監控並自動切換模式：
+  - **切換到 Fallback**: 當發生以下情況時
+    - 找不到 ECG 硬體
+    - BPM 低於閾值 (預設 -10 BPM，幾乎不會觸發)
+    - 超過 5 秒沒有收到訊號
+  - **自動恢復真實訊號**: 每 10 秒重試連接真實 ECG
+  - **無縫切換**: 自動在真實訊號和假訊號間切換，無需手動干預
+- **假訊號模式**: 產生穩定的 75 BPM 虛擬心跳訊號，確保遊戲可玩。
+- **參數調整**: 可透過命令列參數自訂行為：
+  ```bash
+  # 基本使用 (使用預設值)
+  python app.py
+
+  # 自訂切換閾值與重試間隔
+  python app.py --bpm-threshold 30 --bpm-recovery 50 --retry-interval 15
+
+  # 調整假訊號 BPM
+  python app.py --fallback-bpm 80
+  ```
+
+**訊號處理流程 (ecg_reader.py - Pan-Tompkins Algorithm)**
+
+系統使用 `src/ecg/ecg_reader.py` 中的 `ECGProcessor` 進行真實 ECG 處理：
+
+1. **Notch Filter (60 Hz, Q=20)**: IIR notch 濾波器，移除電源線干擾
+2. **Low-pass Filter (40 Hz)**: 2 階 Butterworth 濾波器，去除高頻雜訊
+3. **MA1 (8-point)**: 移動平均平滑
+4. **Derivative**: 差分運算，強化 QRS 斜率
+5. **Squaring**: 平方運算，放大高頻成分
+6. **MWI (150ms)**: 移動窗積分
+
+**R 波峰值偵測**
+- **動態閾值**: 每 50 個樣本根據最近 1 秒的 MWI 最大值更新 (0.5 × max, 下限 20)
+- **Refractory Period**: 250ms，避免 T 波誤判
+- **搜尋窗口**: 在原始訊號中回推 100ms 找到真實 R 波峰值
+- **基線驗證**: R 波振幅必須 > 訊號平均值 + 20
+- **BPM 計算**: 基於最近 5 個 R-R 間隔的平均值 (40-150 BPM 有效範圍)
 
 ## 🏗️ 系統架構
 
@@ -198,6 +236,24 @@ THRESHOLD_MFCC_DTW = 140.0
 # VAD 閾值 (環境噪音較大時可調高)
 VAD_ENERGY_THRESHOLD_MULT_LOW = 2.0
 ```
+
+## 🔧 ECG 訊號處理技術細節
+
+**Filter Initialization**
+- 所有濾波器使用 `lfilter_zi` 初始化狀態向量為零，確保濾波器穩定啟動
+- Notch 和 Low-pass 濾波器使用 IIR 設計，需要正確的初始狀態
+
+**Peak Detection Algorithm**
+- 三點局部極大值檢測：確保當前點大於前後兩點
+- 動態閾值：每 50 個樣本根據最近 1 秒的 MWI 最大值更新
+- Refractory Period：250ms 內不重複偵測，避免 T 波誤判
+- 搜尋窗口：在原始濾波訊號中回推 100ms 找到真實 R 波振幅
+- 基線驗證：R 波必須高於訊號平均值 20 以上
+
+**BPM Calculation**
+- 基於最近 5 個 R-R 間隔的平均值
+- 有效範圍：40-150 BPM (0.4-1.5 秒的 R-R 間隔)
+- 過濾異常值以提高準確度
 
 ## 📖 開發日誌
 
