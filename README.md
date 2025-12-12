@@ -364,7 +364,3 @@ VAD_ENERGY_THRESHOLD_MULT_LOW = 2.0
 - 有效範圍：40-150 BPM (0.4-1.5 秒的 R-R 間隔)
 - 過濾異常值以提高準確度
 
-## 📖 開發日誌
-
-詳細的優化歷程與實驗數據請參閱 [`docs/exp_log.md`](docs/exp_log.md)。
-未來實驗規劃請參閱 [`docs/EXPERIMENT_ROADMAP.md`](docs/EXPERIMENT_ROADMAP.md)。
