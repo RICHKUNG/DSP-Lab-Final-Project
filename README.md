@@ -176,9 +176,23 @@ python app.py
     ```bash
     # 執行完整的效能評估 (預設 mfcc_dtw)
     python tests/test_arena.py --mode mfcc_dtw
-    
+
     # 或測試高準度的 adaptive_ensemble
     python tests/test_arena.py --mode adaptive_ensemble
+    ```
+
+4.  **QA 測試與 Confusion Matrix 評估**:
+    ```bash
+    # 使用 VoiceController (與 app.py 相同流程) 進行即時測試
+    # 由使用者輸入正確答案，最後輸出 confusion matrix 圖片
+    python temp/test_QA_audio.py --method mfcc_dtw
+
+    # 或使用其他辨識方法
+    python temp/test_QA_audio.py --method adaptive_ensemble
+
+    # 測試完成後會在 temp/record/ 目錄下產生：
+    # - Markdown 報告 (詳細統計資料)
+    # - Confusion Matrix 圖片 (視覺化評估結果)
     ```
 
 ## 🎙️ 語音模板管理
