@@ -12,13 +12,14 @@ from .. import config
 # MFCC Features
 # =============================================================================
 
-def extract_mfcc(audio: np.ndarray, include_delta: bool = True) -> np.ndarray:
+def extract_mfcc(audio: np.ndarray, include_delta: bool = True, first_delta_only: bool = False) -> np.ndarray:
     """
     Extract MFCC features from audio.
 
     Args:
         audio: Audio samples (float32, normalized)
         include_delta: Whether to include delta and delta-delta
+        first_delta_only: If True, returns ONLY the 1st order delta (13 dims). Overrides include_delta.
 
     Returns:
         MFCC features array (n_frames, n_features)
@@ -36,19 +37,24 @@ def extract_mfcc(audio: np.ndarray, include_delta: bool = True) -> np.ndarray:
         hop_length=config.HOP_LENGTH
     )
 
-    if include_delta:
+    if include_delta or first_delta_only:
         # librosa.delta requires the window width to be <= number of frames.
         # Short VAD segments can have very few frames, so clamp the width to
         # the largest odd value that fits to avoid "width ... cannot exceed data.shape" errors.
         n_frames = mfcc.shape[1]
         if n_frames == 0:
-            return np.zeros((0, config.N_MFCC * 3), dtype=np.float32)
+            return np.zeros((0, config.N_MFCC * 3 if not first_delta_only else config.N_MFCC), dtype=np.float32)
+        
         delta_width = n_frames if n_frames % 2 == 1 else max(1, n_frames - 1)
         delta_width = min(9, delta_width)
 
         delta = librosa.feature.delta(mfcc, width=delta_width)
-        delta2 = librosa.feature.delta(mfcc, order=2, width=delta_width)
-        features = np.vstack([mfcc, delta, delta2])
+        
+        if first_delta_only:
+            features = delta
+        else:
+            delta2 = librosa.feature.delta(mfcc, order=2, width=delta_width)
+            features = np.vstack([mfcc, delta, delta2])
     else:
         features = mfcc
 

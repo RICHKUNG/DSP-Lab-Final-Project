@@ -46,9 +46,12 @@ def dtw_distance_normalized(seq1: np.ndarray, seq2: np.ndarray, radius: int = 5)
     Returns:
         Normalized DTW distance
     """
-    dist = dtw_distance(seq1, seq2, radius)
-    path_length = len(seq1) + len(seq2)
-    return dist / path_length if path_length > 0 else float('inf')
+    if len(seq1) == 0 or len(seq2) == 0:
+        return float('inf')
+
+    distance, path = fastdtw(seq1, seq2, radius=radius, dist=euclidean)
+    path_length = len(path)
+    return distance / path_length if path_length > 0 else float('inf')
 
 
 # =============================================================================
@@ -58,13 +61,15 @@ def dtw_distance_normalized(seq1: np.ndarray, seq2: np.ndarray, radius: int = 5)
 class TemplateMatcher:
     """Base template matcher for a single method."""
 
-    def __init__(self, method: str = 'mfcc_dtw', threshold: float = None):
+    def __init__(self, method: str = 'mfcc_dtw', threshold: float = None, mfcc_first_delta_only: bool = False):
         """
         Args:
-            method: 'mfcc_dtw', 'stats', 'mel', 'lpc', 'rasta_plp'
+            method: 'mfcc_dtw', 'stats', 'mel', 'lpc', 'rasta_plp', 'raw_dtw'
             threshold: Recognition threshold (None for default)
+            mfcc_first_delta_only: If True, uses only 1st order delta for MFCC.
         """
         self.method = method
+        self.mfcc_first_delta_only = mfcc_first_delta_only
         self.templates: Dict[str, List[np.ndarray]] = {}
         self.template_names: Dict[str, List[str]] = {}  # Track template filenames
         self.noise_templates: List[np.ndarray] = []  # Noise templates for rejection
@@ -75,7 +80,8 @@ class TemplateMatcher:
                 'stats': config.THRESHOLD_STATS,
                 'mel': config.THRESHOLD_MEL,
                 'lpc': config.THRESHOLD_LPC,
-                'rasta_plp': config.THRESHOLD_RASTA_PLP
+                'rasta_plp': config.THRESHOLD_RASTA_PLP,
+                'raw_dtw': config.THRESHOLD_RAW_DTW
             }
             threshold = threshold_map.get(method, 50.0)
         self.threshold = threshold
@@ -85,7 +91,7 @@ class TemplateMatcher:
         processed = preprocess_audio(audio)
 
         if self.method == 'mfcc_dtw':
-            return extract_mfcc(processed)
+            return extract_mfcc(processed, first_delta_only=self.mfcc_first_delta_only)
         elif self.method == 'stats':
             return extract_stats_features(processed)
         elif self.method == 'mel':
@@ -94,6 +100,14 @@ class TemplateMatcher:
             return extract_lpc_features(processed)
         elif self.method == 'rasta_plp':
             return extract_rasta_plp(processed)
+        elif self.method == 'raw_dtw':
+            # Downsample by factor of 16 to speed up DTW (16kHz -> 1kHz)
+            # This reduces computation dramatically while preserving waveform shape
+            # At 1kHz, we still capture the fundamental frequency of speech (80-300Hz)
+            downsample_factor = 16
+            downsampled = processed[::downsample_factor]
+            # Return raw audio as 2D array for DTW (n_samples, 1)
+            return downsampled.reshape(-1, 1).astype(np.float32)
         else:
             raise ValueError(f"Unknown method: {self.method}")
 
@@ -113,7 +127,7 @@ class TemplateMatcher:
 
     def _compute_distance(self, feat1: np.ndarray, feat2: np.ndarray) -> float:
         """Compute distance between features."""
-        if self.method == 'mfcc_dtw' or self.method == 'rasta_plp':
+        if self.method == 'mfcc_dtw' or self.method == 'rasta_plp' or self.method == 'raw_dtw':
             return dtw_distance_normalized(feat1, feat2, radius=config.DTW_RADIUS)
         elif self.method == 'mel':
             return mel_distance(feat1, feat2, metric='cosine')
@@ -297,13 +311,15 @@ class FastLPCMatcher:
 class MultiMethodMatcher:
     """Ensemble matcher using multiple methods."""
 
-    def __init__(self, methods: List[str] = None):
+    def __init__(self, methods: List[str] = None, mfcc_first_delta_only: bool = False):
         """
         Args:
             methods: List of methods to use (default: all)
+            mfcc_first_delta_only: If True, MFCC extraction uses only 1st order delta.
         """
+        self.mfcc_first_delta_only = mfcc_first_delta_only
         if methods is None:
-            methods = ['mfcc_dtw', 'mel', 'lpc']
+            methods = ['mfcc_dtw', 'lpc']
 
         # Use FastLPCMatcher for LPC, standard TemplateMatcher for others
         self.matchers = {}
@@ -311,7 +327,7 @@ class MultiMethodMatcher:
             if m == 'lpc':
                 self.matchers[m] = FastLPCMatcher(fixed_frames=30, threshold=100.0)
             else:
-                self.matchers[m] = TemplateMatcher(method=m)
+                self.matchers[m] = TemplateMatcher(method=m, mfcc_first_delta_only=self.mfcc_first_delta_only)
 
     def add_template(self, command: str, audio: np.ndarray, filename: str = None):
         """Add template to all matchers."""
@@ -365,7 +381,7 @@ class MultiMethodMatcher:
         # But to be safe with the 'methods' list, we check.
         
         if 'mfcc_dtw' in active_methods:
-            feature_cache['mfcc_dtw'] = extract_mfcc(processed_audio)
+            feature_cache['mfcc_dtw'] = extract_mfcc(processed_audio, first_delta_only=self.mfcc_first_delta_only)
 
         if 'mel' in active_methods:
             feature_cache['mel'] = extract_mel_template(processed_audio)
@@ -457,22 +473,6 @@ class MultiMethodMatcher:
             if weight > 0:
                 total_weight += weight
 
-        # Special Veto Rule: 
-        # If Mel says NOISE, we lean heavily towards NOISE unless MFCC is VERY confident
-        # Only apply in non-adaptive or high-noise adaptive scenarios
-        mel_res = results.get('mel')
-        mfcc_res = results.get('mfcc_dtw')
-        
-        if mel_res and mel_res['command'] == 'NOISE':
-            # Check MFCC confidence
-            mfcc_conf = 0
-            if mfcc_res and mfcc_res['command'] not in ('NONE', 'NOISE'):
-                 mfcc_conf = max(0, 1 - (mfcc_res['distance'] / self.matchers['mfcc_dtw'].threshold))
-            
-            # If MFCC is not super confident (< 0.7), allow Mel to veto
-            if mfcc_conf < 0.7:
-                 command_scores['NOISE'] = command_scores.get('NOISE', 0) + 5.0 # Boost NOISE score
-
         # Find best command
         best_command = 'NONE'
         max_score = -1.0
@@ -531,7 +531,7 @@ class MultiMethodMatcher:
         feature_cache = {}
         
         if 'mfcc_dtw' in self.matchers:
-            feature_cache['mfcc_dtw'] = extract_mfcc(processed_audio)
+            feature_cache['mfcc_dtw'] = extract_mfcc(processed_audio, first_delta_only=self.mfcc_first_delta_only)
         if 'mel' in self.matchers:
             feature_cache['mel'] = extract_mel_template(processed_audio)
         if 'rasta_plp' in self.matchers:
@@ -561,7 +561,7 @@ class MultiMethodMatcher:
                  snr = estimate_snr(audio)
              weights = get_adaptive_weights(snr)
         else:
-             weights = {'mfcc_dtw': 4.0, 'mel': 2.5, 'lpc': 1.0, 'stats': 0.0}
+             weights = {'mfcc_dtw': 5.0, 'lpc': 1.0, 'stats': 0.0}
 
         # 4. Voting Logic
         votes = {}
@@ -627,13 +627,11 @@ def get_adaptive_weights(snr_db: float) -> Dict[str, float]:
     Strategy:
     - Clean (>30dB): Favor mfcc_dtw (fast, accurate)
     - Moderate (15-30dB): Balanced
-    - Noisy (<15dB): Favor mel (stable in noise)
+    - Noisy (<15dB): Favor mfcc_dtw as mel is removed
     """
     if snr_db > 30:
-        return {'mfcc_dtw': 5.0, 'mel': 1.0, 'lpc': 0.5, 'stats': 0.0}
+        return {'mfcc_dtw': 6.0, 'lpc': 0.5, 'stats': 0.0}
     elif snr_db > 15:
-        # Moderate: Increased Mel weight to handle 20-25dB noise better
-        # Decreased LPC as it degrades quickly
-        return {'mfcc_dtw': 3.0, 'mel': 4.0, 'lpc': 0.5, 'stats': 0.0}
+        return {'mfcc_dtw': 5.0, 'lpc': 0.5, 'stats': 0.0}
     else:
-        return {'mfcc_dtw': 1.0, 'mel': 5.0, 'lpc': 0.5, 'stats': 0.0}
+        return {'mfcc_dtw': 4.0, 'lpc': 0.5, 'stats': 0.0}

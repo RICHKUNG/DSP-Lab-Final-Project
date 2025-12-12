@@ -47,14 +47,15 @@ TEMPLATE_FIXED_FRAMES = 50  # for mel template resizing
 STATS_SEGMENTS = 3  # number of segments for stats features
 
 # DTW settings
-DTW_RADIUS = 3  # Reduced for speed (was 6)
+DTW_RADIUS = 8  # Increased for better speed variation tolerance (was 3)
 
 # Recognition thresholds (tuned for higher sensitivity in-game)
-THRESHOLD_MFCC_DTW = 160.0  # Slightly looser to avoid false negatives on quiet speech
+THRESHOLD_MFCC_DTW = 320.0  # Slightly looser to avoid false negatives on quiet speech
 THRESHOLD_STATS = 600.0     # Increased due to more features (deltas+ZCR)
 THRESHOLD_MEL = 0.60        # Cosine distance - allow more variation to improve hit rate
 THRESHOLD_LPC = 110.0       # FastLPCMatcher - Balanced (tested: 80 too loose, 120 too strict)
-THRESHOLD_RASTA_PLP = 140.0 # RASTA-PLP Matcher
+THRESHOLD_RASTA_PLP = 280.0 # RASTA-PLP Matcher
+THRESHOLD_RAW_DTW = 0.020  # Raw audio DTW (downsampled 16x, normalized distance)
 
 # Command list
 COMMANDS = ['START', 'PAUSE', 'JUMP', 'MAGNET', 'INVERT']

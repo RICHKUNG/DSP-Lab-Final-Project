@@ -83,22 +83,48 @@ class ECGManager:
 
         # 輪詢佇列
         self._signal_queue = deque(maxlen=100)
+        
+        # 資料回調 (用於視覺化)
+        self._data_callback: Optional[Callable[[Dict[str, Any]], None]] = None
+
+    def set_data_callback(self, callback: Callable[[Dict[str, Any]], None]) -> None:
+        """設定資料回調函數 (用於視覺化)"""
+        self._data_callback = callback
 
     def _init_filters(self) -> None:
-        """初始化濾波器"""
-        # MA1: 平滑 (8 點)
+        """初始化濾波器 (Pan-Tompkins + Notch + Lowpass)"""
+        # 1. Notch filter (60 Hz) - 移除電源雜訊
+        from scipy.signal import iirnotch, lfilter_zi
+        f0 = 60.0
+        Q = 20.0
+        self.b_notch, self.a_notch = iirnotch(f0, Q, self.sample_rate)
+        self.zi_notch = lfilter_zi(self.b_notch, self.a_notch) * 0
+
+        # 2. Low-pass filter (40 Hz) - Butterworth
+        from scipy.signal import butter
+        self.b_lp, self.a_lp = self._create_lowpass_filter(40, self.sample_rate, order=2)
+        self.zi_lp = lfilter_zi(self.b_lp, self.a_lp) * 0
+
+        # 3. MA1: 平滑 (8 點)
         self.window_ma1 = 8
         self.b_ma1 = np.ones(self.window_ma1) / self.window_ma1
-        self.zi_ma1 = np.zeros(self.window_ma1 - 1)
+        self.zi_ma1 = lfilter_zi(self.b_ma1, 1) * 0
 
-        # 差分
+        # 4. 差分
         self.b_diff = np.array([1, -1])
-        self.zi_diff = np.zeros(1)
+        self.zi_diff = lfilter_zi(self.b_diff, 1) * 0
 
-        # MWI: 移動窗積分 (40 點)
-        self.window_mwi = 40
-        self.b_mwi = np.ones(self.window_mwi) / self.window_mwi
-        self.zi_mwi = np.zeros(self.window_mwi - 1)
+        # 5. MWI: 移動窗積分 (150ms window)
+        win_mwi = int(0.150 * self.sample_rate)
+        self.b_mwi = np.ones(win_mwi) / win_mwi
+        self.zi_mwi = lfilter_zi(self.b_mwi, 1) * 0
+
+    def _create_lowpass_filter(self, cutoff: float, fs: float, order: int = 2):
+        """建立 Butterworth 低通濾波器"""
+        from scipy.signal import butter
+        nyq = 0.5 * fs
+        normal = cutoff / nyq
+        return butter(order, normal, btype="low")
 
     def _init_peak_detector(self) -> None:
         """初始化峰值偵測器"""
@@ -416,6 +442,10 @@ class ECGManager:
                 # 處理每個樣本
                 for raw_value in samples:
                     result = self._process_sample(raw_value)
+                    
+                    # 執行回調 (如果有的話)
+                    if self._data_callback:
+                        self._data_callback(result)
 
                     if result['is_peak']:
                         # 交替方向（遊戲障礙物多樣性）

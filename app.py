@@ -12,6 +12,7 @@ from src.event_bus import EventBus
 from src.ecg import ECGManager
 from src.audio.controller import VoiceController
 from src.game import GameServer
+from src import config
 
 
 def main():

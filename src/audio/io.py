@@ -11,6 +11,7 @@ import sounddevice as sd
 from scipy.signal import resample_poly
 
 from .. import config
+from .vad import trim_silence
 
 
 def find_suitable_device(sample_rate=16000, verbose=False, preferred_device_index: Optional[int] = None) -> Optional[Tuple[int, int]]:
@@ -447,6 +448,7 @@ def load_templates_from_dir(
         # 噪音檔
         if noise_decider(stem):
             audio = load_audio_file(str(audio_path))
+            audio = trim_silence(audio)
             add_noise(audio)
             noise_loaded += 1
             print(f"Loaded noise template: {audio_path.name}")
@@ -456,6 +458,7 @@ def load_templates_from_dir(
         for cn_cmd, en_cmd in command_mapping.items():
             if stem.startswith(cn_cmd) or cn_cmd in stem:
                 audio = load_audio_file(str(audio_path))
+                audio = trim_silence(audio)
                 add_template(en_cmd, audio, audio_path.name)
                 templates_loaded += 1
                 print(f"Loaded template: {audio_path.name} -> {en_cmd}")
@@ -476,6 +479,7 @@ def load_templates_from_dir(
     if noise_dir.exists() and noise_dir.is_dir():
         for audio_file in _iter_audio_files(noise_dir):
             audio = load_audio_file(str(audio_file))
+            audio = trim_silence(audio)
             add_noise(audio)
             noise_loaded += 1
             print(f"Loaded noise template: {noise_dir.name}/{audio_file.name}")

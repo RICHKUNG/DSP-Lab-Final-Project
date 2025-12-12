@@ -189,3 +189,28 @@ def preprocess_audio(audio: np.ndarray) -> np.ndarray:
         audio = audio / rms * 0.1  # normalize to ~0.1 RMS
 
     return audio
+
+
+def trim_silence(audio: np.ndarray, top_db: int = 20) -> np.ndarray:
+    """
+    Trim silence from audio using librosa.
+    """
+    # Convert to float for librosa if needed (though librosa handles int/float, 
+    # effects.trim usually expects float or returns index).
+    # librosa.effects.trim returns (y_trimmed, index)
+    
+    # Ensure float for processing
+    y_float = audio.astype(np.float32)
+    
+    trimmed, _ = librosa.effects.trim(y_float, top_db=top_db)
+    
+    # If input was int16, convert back? 
+    # Our system seems to use int16 in some places and float in others.
+    # preprocess_audio returns float32. 
+    # load_audio_file returns int16.
+    # templates are stored as features (float).
+    # So returning float is fine, but if we want to be consistent with load_audio_file returning int16...
+    # But add_template calls preprocess_audio immediately which converts to float.
+    # So returning float32 is safe.
+    
+    return trimmed

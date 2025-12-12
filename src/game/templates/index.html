@@ -292,7 +292,7 @@
         let isRunning = false;
         let isPaused = false;
         let score = 0;
-        let gameSpeed = 6;
+        let gameSpeed = 8; // Accelerated from 6
         let obstacles = [];
 
         // 玩家
@@ -308,8 +308,9 @@
             update() {
                 const gravityDir = this.isOnTop ? 1 : -1;
                 const groundY = this.isOnTop ? centerY - this.size : centerY;
-
-                this.dy += 0.5 * gravityDir;
+                
+                // Stronger gravity for snappier jumps (was 0.5)
+                this.dy += 1.0 * gravityDir;
                 this.y += this.dy;
 
                 // 落地
@@ -335,7 +336,8 @@
 
             jump() {
                 if (this.jumpCount < this.maxJumps) {
-                    this.dy = 10 * (this.isOnTop ? -1 : 1);
+                    // Increased jump force (was 10)
+                    this.dy = 22 * (this.isOnTop ? -1 : 1);
                     this.jumpCount++;
                 }
             }
@@ -347,7 +349,7 @@
                 this.x = width;
                 this.dir = dir; // 1 (下) 或 -1 (上)
                 this.height = Math.min(Math.max(height, 20), 80); 
-                this.width = 30;
+                this.width = 15; // Adjusted for thinner obstacles, lowering difficulty
                 this.markedForDeletion = false;
             }
 
@@ -359,23 +361,31 @@
             draw() {
                 ctx.fillStyle = '#0f0';
                 if (this.dir === 1) {
-                    // 下方障礙 (向上突起)
+                    // 下方障礙 (從中線向下長) - Bottom Obstacle
                     ctx.fillRect(this.x, centerY, this.width, this.height);
                 } else {
-                    // 上方障礙 (向下突起)
+                    // 上方障礙 (從中線向上長) - Top Obstacle
                     ctx.fillRect(this.x, centerY - this.height, this.width, this.height);
                 }
             }
 
             collidesWith(p) {
-                // 簡易 AABB
-                if (p.x < this.x + this.width && p.x + p.size > this.x) {
-                    if (this.dir === 1) {
-                         // 下方障礙: 玩家碰到中線以下
-                         return (p.y + p.size > centerY);
-                    } else {
-                        // 上方障礙: 玩家碰到中線以上
-                        return (p.y < centerY);
+                // Proper AABB Collision
+                const obsX = this.x;
+                const obsY = (this.dir === 1) ? centerY : centerY - this.height;
+                const obsW = this.width;
+                const obsH = this.height;
+
+                const pX = p.x;
+                const pY = p.y;
+                const pS = p.size;
+
+                // Check overlap
+                // 1. Horizontal
+                if (pX < obsX + obsW && pX + pS > obsX) {
+                    // 2. Vertical
+                    if (pY < obsY + obsH && pY + pS > obsY) {
+                        return true;
                     }
                 }
                 return false;
@@ -395,7 +405,13 @@
 
             // 優先處理 START
             if (action === 'START') {
-                if (!isRunning) startGame();
+                if (!isRunning) {
+                    startGame();
+                } else if (isPaused) {
+                    // Fix: START also resumes game
+                    isPaused = false;
+                    log("Game Resumed (via START)");
+                }
                 return;
             }
 
@@ -410,7 +426,17 @@
         });
 
         socket.on('bpm_update', (data) => {
-            document.getElementById('bpm').textContent = Math.round(data.bpm);
+            const bpm = Math.round(data.bpm);
+            document.getElementById('bpm').textContent = bpm;
+            
+            // Dynamic Speed Adjustment based on BPM
+            // Map BPM 60 -> Speed 6, BPM 100 -> Speed 10
+            // Clamped between 5 (min) and 13 (max)
+            if (bpm > 30) {
+                let newSpeed = bpm / 10;
+                // Clamp speed to keep game playable
+                gameSpeed = Math.max(5, Math.min(13, newSpeed));
+            }
         });
 
         // 鍵盤控制

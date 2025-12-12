@@ -5,6 +5,8 @@ import os
 import time
 import argparse
 import numpy as np
+import scipy.io.wavfile as wav
+from datetime import datetime
 
 # Ensure the project root is in the Python path for module imports
 _current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -12,10 +14,11 @@ _project_root = os.path.dirname(_current_dir)
 if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
-from src.audio.io import AudioStream, find_suitable_device
+from src.audio.io import AudioStream, find_suitable_device, load_audio_file
 from src.audio.vad import VAD, VADState
 from src.audio.recognizers import MultiMethodMatcher
 from src import config
+from pathlib import Path
 
 
 def collect_noise_samples(audio_stream, duration_ms=2000, num_samples=5):
@@ -90,27 +93,102 @@ def test_live_recognition():
     parser.add_argument(
         "--method",
         type=str,
-        choices=['mfcc_dtw', 'ensemble', 'adaptive_ensemble'],
+        choices=['mfcc_dtw', 'raw_dtw', 'rasta_plp', 'ensemble', 'adaptive_ensemble'],
         default='adaptive_ensemble',
-        help="Recognition method: 'mfcc_dtw', 'ensemble' (fixed), or 'adaptive_ensemble' (SNR-based)"
+        help="Recognition method: 'mfcc_dtw', 'raw_dtw', 'rasta_plp', 'ensemble', or 'adaptive_ensemble'"
+    )
+    parser.add_argument(
+        "--include-augmented",
+        action="store_true",
+        default=False,
+        help="Include augmented templates from cmd_templates/augmented/"
+    )
+    parser.add_argument(
+        "--augmented-only",
+        action="store_true",
+        default=False,
+        help="Use ONLY augmented templates (excludes original templates)"
+    )
+    parser.add_argument(
+        "--first-delta",
+        action="store_true",
+        default=False,
+        help="Use only 1st order delta (13 dim) for MFCC features"
     )
     args = parser.parse_args()
 
     # Load templates
     base_dir = os.path.join(_project_root, "cmd_templates")
-    print(f"Loading templates from: {base_dir}")
-    
+    augmented_dir = os.path.join(base_dir, "augmented")
+
     # Configure matcher based on method
     if args.method == 'mfcc_dtw':
         methods = ['mfcc_dtw']
+    elif args.method == 'raw_dtw':
+        methods = ['raw_dtw']
+    elif args.method == 'rasta_plp':
+        methods = ['rasta_plp']
     else:
         # Both ensemble and adaptive_ensemble use all methods
-        methods = ['mfcc_dtw', 'mel', 'lpc']
-        
-    matcher = MultiMethodMatcher(methods=methods)
+        methods = ['mfcc_dtw', 'mel', 'lpc', 'rasta_plp']
+
+    matcher = MultiMethodMatcher(methods=methods, mfcc_first_delta_only=args.first_delta)
 
     print("\nLoading templates...")
-    matcher.load_templates_from_dir(base_dir)
+
+    # Helper function to load templates from a specific directory
+    def load_templates_from_path(path, description=""):
+        """Load templates from a specific path."""
+        if not os.path.exists(path):
+            print(f"[WARN] Directory not found: {path}")
+            return 0
+
+        count = 0
+        for audio_file in sorted(Path(path).glob("*.wav")):
+            # Skip noise files
+            if "noise" in audio_file.stem.lower() or "噪音" in audio_file.stem:
+                continue
+
+            try:
+                audio_data = load_audio_file(str(audio_file))
+                # Determine command from filename
+                matched = False
+                for cn_cmd, en_cmd in config.COMMAND_MAPPING.items():
+                    if audio_file.stem.startswith(cn_cmd) or cn_cmd in audio_file.stem:
+                        matcher.add_template(en_cmd, audio_data, audio_file.name)
+                        if description:
+                            print(f"  {description}: {audio_file.name} -> {en_cmd}")
+                        else:
+                            print(f"  Loaded: {audio_file.name} -> {en_cmd}")
+                        count += 1
+                        matched = True
+                        break
+                if not matched and description:
+                    print(f"  [SKIP] {audio_file.name} (no command match)")
+            except Exception as e:
+                print(f"  [ERROR] Failed to load {audio_file.name}: {e}")
+        return count
+
+    # Load based on augmented flags
+    if args.augmented_only:
+        # Load ONLY augmented templates
+        print(f"Loading ONLY augmented templates from: {augmented_dir}")
+        count = load_templates_from_path(augmented_dir, "Augmented")
+        print(f"Total: {count} augmented templates loaded\n")
+    elif args.include_augmented:
+        # Load both original and augmented
+        print(f"Loading original templates from: {base_dir}")
+        orig_count = load_templates_from_path(base_dir, "Original")
+
+        print(f"\nLoading augmented templates from: {augmented_dir}")
+        aug_count = load_templates_from_path(augmented_dir, "Augmented")
+        print(f"Total: {orig_count} original + {aug_count} augmented = {orig_count + aug_count} templates\n")
+    else:
+        # Load only original templates (default behavior)
+        print(f"Loading original templates from: {base_dir}")
+        print("(Augmented templates excluded. Use --include-augmented to include them)\n")
+        count = load_templates_from_path(base_dir, "Original")
+        print(f"Total: {count} original templates loaded\n")
 
     # Show loaded templates
     print("\nLoaded templates:")
@@ -194,7 +272,10 @@ def test_live_recognition():
     vad = VAD(background_rms=bg_rms)
 
     print("\n" + "=" * 80)
-    print(f"Listening for commands... (High-speed mode - {args.method.upper()})")
+    method_display = args.method.upper()
+    if args.method == 'raw_dtw':
+        method_display = "RAW_DTW (Time Domain Only)"
+    print(f"Listening for commands... (High-speed mode - {method_display})")
     print("Say: 開始, 暫停, 跳")
     print("Press Ctrl+C to stop")
     print("=" * 80)
@@ -235,20 +316,58 @@ def test_live_recognition():
                 stats['vad_latencies'].append(vad_latency)
                 stats['total_detections'] += 1
 
+                # Save the segment to a wav file
+                record_dir = os.path.join(os.path.dirname(__file__), 'record')
+                os.makedirs(record_dir, exist_ok=True)
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                filename = f"live_test_{timestamp}_{stats['total_detections']}.wav"
+                filepath = os.path.join(record_dir, filename)
+                try:
+                    wav.write(filepath, config.SAMPLE_RATE, segment.astype(np.int16))
+                except Exception as e:
+                    print(f"\n[ERROR] Failed to save audio: {e}")
+
                 # Process with selected method
                 total_start = time.time()
                 if args.method == 'mfcc_dtw':
                     # Use only MFCC+DTW method
                     results = matcher.recognize(segment, mode='all', adaptive=False)
                     command = results['all_results']['mfcc_dtw']['command']
+                    distance = results['all_results']['mfcc_dtw']['distance']
+                    best_template = results['all_results']['mfcc_dtw']['best_template']
+                    method_results = results['all_results']
+                elif args.method == 'raw_dtw':
+                    # Use only Raw Audio DTW method (time domain)
+                    results = matcher.recognize(segment, mode='all', adaptive=False)
+                    command = results['all_results']['raw_dtw']['command']
+                    distance = results['all_results']['raw_dtw']['distance']
+                    best_template = results['all_results']['raw_dtw']['best_template']
+                    method_results = results['all_results']
+                elif args.method == 'rasta_plp':
+                    # Use only RASTA-PLP method
+                    results = matcher.recognize(segment, mode='all', adaptive=False)
+                    command = results['all_results']['rasta_plp']['command']
+                    distance = results['all_results']['rasta_plp']['distance']
+                    best_template = results['all_results']['rasta_plp']['best_template']
+                    method_results = results['all_results']
                 elif args.method == 'ensemble':
                     # Use standard ensemble (fixed weights)
-                    results = matcher.recognize(segment, mode='ensemble', adaptive=False)
+                    results = matcher.recognize(segment, mode='all', adaptive=False)
                     command = results['command']
+                    best_template = results.get('best_template', '')
+                    method_results = results.get('all_results', {})
+                    # Get distance from the winning method's result
+                    winning_method = results.get('method', 'mfcc_dtw')
+                    distance = method_results.get(winning_method, {}).get('distance', 0)
                 else:
                     # Use adaptive ensemble (SNR-based)
-                    results = matcher.recognize(segment, mode='ensemble', adaptive=True)
+                    results = matcher.recognize(segment, mode='all', adaptive=True)
                     command = results['command']
+                    best_template = results.get('best_template', '')
+                    method_results = results.get('all_results', {})
+                    # Get distance from the winning method's result
+                    winning_method = results.get('method', 'mfcc_dtw')
+                    distance = method_results.get(winning_method, {}).get('distance', 0)
                 total_proc_time = (time.time() - total_start) * 1000
                 stats['processing_times'].append(total_proc_time)
 
@@ -258,16 +377,27 @@ def test_live_recognition():
                 elif command != 'NONE':
                     stats['successful_matches'] += 1
 
-                # Print result on same line with \r
+                # Print result with template and distance info
                 if command == 'NOISE':
-                    display = f"[噪音] #{stats['total_detections']} | 噪音偵測 | 處理時間:{total_proc_time:.0f}ms"
+                    display = f"[噪音] #{stats['total_detections']} | 噪音偵測 | dist:{distance:.1f} | {total_proc_time:.0f}ms"
                 elif command == 'NONE':
-                    display = f"[無匹配] #{stats['total_detections']} | 無法識別 | 處理時間:{total_proc_time:.0f}ms"
+                    display = f"[無匹配] #{stats['total_detections']} | 無法識別 | 最近:{best_template} dist:{distance:.1f} | {total_proc_time:.0f}ms"
                 else:
-                    display = f"[指令:{command}] #{stats['total_detections']} | 成功識別 | 處理時間:{total_proc_time:.0f}ms"
+                    display = f"[{command}] #{stats['total_detections']} | 模板:{best_template} | dist:{distance:.1f} | {total_proc_time:.0f}ms"
 
                 # Print with padding to clear previous line
-                print(f"\r{display:<80}", end='', flush=True)
+                print(f"\r{display:<100}", end='', flush=True)
+
+                # Print detailed method breakdown on new line if using ensemble
+                if args.method in ['ensemble', 'adaptive_ensemble'] and method_results:
+                    print()  # New line
+                    method_info = []
+                    for method_name, method_result in method_results.items():
+                        m_cmd = method_result.get('command', 'NONE')
+                        m_dist = method_result.get('distance', 0)
+                        m_tpl = method_result.get('best_template', '')
+                        method_info.append(f"  {method_name}:{m_cmd}({m_tpl}, {m_dist:.1f})")
+                    print(" | ".join(method_info))
 
                 # Reset VAD
                 vad.reset()
