@@ -175,6 +175,12 @@
             border-radius: 12px;
             box-shadow: 0 14px 40px rgba(0, 0, 0, 0.55);
         }
+        #calibrationScreen {
+            max-width: 500px;
+            width: min(500px, 85vw);
+            max-height: 80vh;
+            overflow-y: auto;
+        }
         #gameOverScreen { left: 50%; }
         button {
             background: #0f0;
@@ -190,6 +196,102 @@
         }
         button:hover { background: #0d0; }
         .hidden { display: none !important; }
+
+        /* Calibration styles */
+        .calib-item {
+            margin: 12px 0;
+            padding: 10px;
+            background: rgba(0, 40, 0, 0.5);
+            border: 1px solid #0a4;
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            transition: all 0.3s ease;
+            opacity: 0.7;
+        }
+        .calib-item.active {
+            background: rgba(0, 80, 0, 0.95) !important;
+            border: 2px solid #0f0 !important;
+            box-shadow: 0 0 20px rgba(0, 255, 0, 0.5) !important;
+            transform: scale(1.08) !important;
+            opacity: 1 !important;
+        }
+        .calib-item.completed {
+            opacity: 0.4 !important;
+            background: rgba(0, 20, 0, 0.3) !important;
+        }
+        .calib-icon {
+            font-size: 18px;
+            width: 24px;
+            text-align: center;
+        }
+        .calib-item strong {
+            color: #c8ffc8;
+            font-size: 15px;
+        }
+        .calib-status {
+            margin-left: auto;
+            color: #888;
+            font-size: 13px;
+            font-weight: bold;
+        }
+        .calib-status.recording {
+            color: #ff0;
+            animation: pulse 1s ease-in-out infinite;
+        }
+        .calib-status.success {
+            color: #0f0;
+        }
+        .calib-status.error {
+            color: #f33;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        #calibrationPrompt {
+            font-size: 28px !important;
+            color: #0ff !important;
+            text-shadow: 0 0 15px rgba(0, 255, 255, 0.7);
+            animation: pulse 1.5s ease-in-out infinite;
+        }
+
+        /* Leaderboard Styles */
+        .leaderboard-container {
+            margin-top: 20px;
+            width: 100%;
+            max-height: 200px;
+            overflow-y: auto;
+            text-align: left;
+            border-top: 1px solid #0a4;
+            padding-top: 10px;
+        }
+        .leaderboard-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 14px;
+            color: #b6ffb6;
+        }
+        .leaderboard-table th, .leaderboard-table td {
+            padding: 5px;
+            border-bottom: 1px solid rgba(0, 170, 68, 0.3);
+        }
+        .leaderboard-table th {
+            color: #0f0;
+            text-align: left;
+        }
+        .leaderboard-table tr:first-child td {
+            color: #ff0; /* Gold for 1st */
+            font-weight: bold;
+        }
+        .leaderboard-table tr:nth-child(2) td {
+            color: #ccc; /* Silver */
+        }
+        .leaderboard-table tr:nth-child(3) td {
+            color: #d4a065; /* Bronze */
+        }
+
     </style>
 </head>
 <body>
@@ -235,13 +337,50 @@
                 語音指令: 開始 / 跳 / 翻 / 暫停<br>
                 鍵盤: Enter (開始) / ↑ (跳) / ↓ (翻) / Space (暫停)
             </p>
-            <button onclick="startGame()">START GAME</button>
+            <button onclick="showCalibrationScreen()">START GAME</button>
+            <button onclick="startGame()" style="background: #888; margin-top: 10px;">SKIP CALIBRATION</button>
+        </div>
+
+        <div id="calibrationScreen" class="overlay hidden">
+            <h1 style="color:#0ff">VOICE CALIBRATION</h1>
+            <p style="font-size: 14px; margin-bottom: 20px;">
+                請依序說出以下指令，系統將錄製您的聲音以提高辨識準確度
+            </p>
+            <div id="calibrationStatus" style="text-align: left; margin: 20px 0; font-size: 14px;">
+                <div class="calib-item" id="item-START"><span class="calib-icon">🎤</span> <strong>開始 (START)</strong> <span id="status-START" class="calib-status">等待中...</span></div>
+                <div class="calib-item" id="item-JUMP"><span class="calib-icon">🎤</span> <strong>跳 (JUMP)</strong> <span id="status-JUMP" class="calib-status">等待中...</span></div>
+                <div class="calib-item" id="item-FLIP"><span class="calib-icon">🎤</span> <strong>翻 (FLIP)</strong> <span id="status-FLIP" class="calib-status">等待中...</span></div>
+                <div class="calib-item" id="item-PAUSE"><span class="calib-icon">🎤</span> <strong>暫停 (PAUSE)</strong> <span id="status-PAUSE" class="calib-status">等待中...</span></div>
+            </div>
+            <p id="calibrationPrompt" style="font-size: 18px; color: #0f0; margin: 20px 0; font-weight: bold;">
+                請說：開始
+            </p>
+            <button onclick="skipCalibration()" style="background: #666; margin-top: 15px;">SKIP</button>
         </div>
 
         <div id="gameOverScreen" class="overlay hidden">
             <h1 style="color:#f33">GAME OVER</h1>
             <p>距離: <span id="finalDist"></span>m</p>
+            
+            <div class="leaderboard-container">
+                <h3 style="color: #0f0; margin: 0 0 10px 0; text-align: center;">🏆 天梯榜 (Top 10)</h3>
+                <table class="leaderboard-table">
+                    <thead>
+                        <tr>
+                            <th width="15%">#</th>
+                            <th width="50%">玩家</th>
+                            <th width="35%">距離</th>
+                        </tr>
+                    </thead>
+                    <tbody id="leaderboardBody">
+                        <!-- Rows injected by JS -->
+                        <tr><td colspan="3" style="text-align:center;">Loading...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+
             <button onclick="startGame()">RESTART</button>
+            <button onclick="showCalibrationScreen()" style="background: #888; margin-top: 10px;">RE-CALIBRATE</button>
         </div>
     </div>
 
@@ -497,14 +636,29 @@
 
         // 接收事件
         socket.on('spawn_obstacle', (data) => {
-            if (!isRunning || isPaused) return;
+            if (!isRunning || isPaused || isCalibrating) return;
             // log(`Spawn obstacle: ${data.dir}`);
             obstacles.push(new Obstacle(data.dir, data.height));
         });
 
         socket.on('player_action', (data) => {
-            log(`Action received: ${data.action}`);
             const action = (data.action || '').toUpperCase().trim();
+
+            // 校正模式下處理
+            if (isCalibrating) {
+                const currentTarget = calibrationCommands[calibrationIndex];
+                if (action === currentTarget) {
+                    log(`✓ Capturing audio for: ${action}`);
+                    // Visual feedback on the item
+                    const itemEl = document.getElementById(`item-${action}`);
+                    if (itemEl) itemEl.style.borderColor = '#fff';
+                } else {
+                    log(`Ignored: ${action} (Target: ${currentTarget})`);
+                }
+                return;
+            }
+
+            log(`Action received: ${data.action}`);
 
             // 優先處理 START
             if (action === 'START') {
@@ -534,7 +688,7 @@
         socket.on('bpm_update', (data) => {
             const bpm = Math.round(data.bpm);
             document.getElementById('bpm').textContent = bpm;
-            
+
             // Dynamic Speed Adjustment based on BPM
             // Map BPM 60 -> Speed 6, BPM 100 -> Speed 10
             // Clamped between 5 (min) and 13 (max)
@@ -545,8 +699,145 @@
             }
         });
 
+        // Calibration Logic
+        let calibrationCommands = ['START', 'JUMP', 'FLIP', 'PAUSE'];
+        let calibrationIndex = 0;
+        let isCalibrating = false;
+
+        const commandPrompts = {
+            'START': '開始',
+            'JUMP': '跳',
+            'FLIP': '翻',
+            'PAUSE': '暫停'
+        };
+
+        function showCalibrationScreen() {
+            log("Entering calibration screen...");
+            document.getElementById('startScreen').classList.add('hidden');
+            document.getElementById('calibrationScreen').classList.remove('hidden');
+            calibrationIndex = 0;
+            isCalibrating = true;
+
+            // Reset all items
+            calibrationCommands.forEach(cmd => {
+                const itemEl = document.getElementById(`item-${cmd}`);
+                if (itemEl) {
+                    itemEl.classList.remove('active', 'completed');
+                    log(`Reset item: ${cmd}`);
+                } else {
+                    log(`ERROR: Cannot find item-${cmd}`);
+                }
+                const statusEl = document.getElementById(`status-${cmd}`);
+                if (statusEl) {
+                    statusEl.textContent = '等待中...';
+                    statusEl.className = 'calib-status';
+                } else {
+                    log(`ERROR: Cannot find status-${cmd}`);
+                }
+            });
+
+            log("Starting calibration...");
+            startCalibration();
+        }
+
+        function skipCalibration() {
+            isCalibrating = false;
+            document.getElementById('calibrationScreen').classList.add('hidden');
+            startGame();
+        }
+
+        function startCalibration() {
+            log(`startCalibration called, index=${calibrationIndex}`);
+
+            if (calibrationIndex >= calibrationCommands.length) {
+                // All commands calibrated
+                log("Calibration complete!");
+                setTimeout(() => {
+                    isCalibrating = false;
+                    document.getElementById('calibrationScreen').classList.add('hidden');
+                    startGame();
+                }, 1000);
+                return;
+            }
+
+            const command = calibrationCommands[calibrationIndex];
+            const prompt = commandPrompts[command];
+            log(`Current command: ${command}, prompt: ${prompt}`);
+
+            // Highlight current command item
+            calibrationCommands.forEach((cmd, idx) => {
+                const itemEl = document.getElementById(`item-${cmd}`);
+                if (!itemEl) {
+                    log(`ERROR: Cannot find item-${cmd} in highlight loop`);
+                    return;
+                }
+
+                if (idx < calibrationIndex) {
+                    itemEl.classList.add('completed');
+                    itemEl.classList.remove('active');
+                    log(`${cmd}: marked as completed`);
+                } else if (idx === calibrationIndex) {
+                    itemEl.classList.add('active');
+                    itemEl.classList.remove('completed');
+                    log(`${cmd}: marked as ACTIVE`);
+                } else {
+                    itemEl.classList.remove('active', 'completed');
+                    log(`${cmd}: pending`);
+                }
+            });
+
+            // Update UI
+            document.getElementById('calibrationPrompt').textContent = `請說：${prompt}`;
+            const statusEl = document.getElementById(`status-${command}`);
+            statusEl.textContent = '🎤 錄音中...';
+            statusEl.className = 'calib-status recording';
+
+            log(`Calibrating: ${command}...`);
+
+            // Send calibration request
+            socket.emit('calibrate_command', { command: command });
+        }
+
+        socket.on('calibration_result', (data) => {
+            log(`[DEBUG] Calib Result: ${JSON.stringify(data)}`);
+            
+            if (!isCalibrating) {
+                log("[DEBUG] Ignored result (not calibrating)");
+                return;
+            }
+
+            const command = data.command;
+            const success = data.success;
+            const message = data.message;
+            const statusEl = document.getElementById(`status-${command}`);
+
+            if (success) {
+                statusEl.textContent = '✓ 完成';
+                statusEl.className = 'calib-status success';
+                log(`${command}: Success`);
+
+                // Move to next command
+                calibrationIndex++;
+                setTimeout(() => {
+                    startCalibration();
+                }, 800);
+            } else {
+                statusEl.textContent = `✗ ${message}`;
+                statusEl.className = 'calib-status error';
+                log(`${command}: Failed - ${message}`);
+
+                // Retry after delay
+                setTimeout(() => {
+                    startCalibration();
+                }, 1500);
+            }
+        });
+
         // 鍵盤控制
         document.addEventListener('keydown', (e) => {
+            // 校正模式下忽略鍵盤遊戲控制
+            if (isCalibrating) return;
+
             if (e.key === 'ArrowUp') {
                 if (isRunning && !isPaused) player.jump();
             } else if (e.key === 'ArrowDown') {
@@ -555,7 +846,14 @@
                 isPaused = !isPaused;
                 log("Pause toggle key pressed");
             } else if (e.key === 'Enter') {
-                if (!isRunning) startGame();
+                if (!isRunning) {
+                    const startScreen = document.getElementById('startScreen');
+                    if (!startScreen.classList.contains('hidden')) {
+                        showCalibrationScreen();
+                    } else {
+                        startGame();
+                    }
+                }
             }
         });
 
@@ -587,9 +885,34 @@
         function gameOver() {
             log("Game Over");
             isRunning = false;
-            document.getElementById('finalDist').textContent = Math.floor(score / 10);
+            const finalScore = Math.floor(score / 10);
+            document.getElementById('finalDist').textContent = finalScore;
             document.getElementById('gameOverScreen').classList.remove('hidden');
+            
+            // Send score to server
+            socket.emit('game_over', { score: finalScore });
         }
+        
+        socket.on('leaderboard_update', (data) => {
+            const list = data.leaderboard;
+            const tbody = document.getElementById('leaderboardBody');
+            tbody.innerHTML = '';
+            
+            if (list.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="3" style="text-align:center;">No records yet</td></tr>';
+                return;
+            }
+
+            list.forEach((item, index) => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td>${index + 1}</td>
+                    <td>${item.name}</td>
+                    <td>${item.score}m</td>
+                `;
+                tbody.appendChild(tr);
+            });
+        });
 
         function gameLoop() {
             if (!isRunning) return;

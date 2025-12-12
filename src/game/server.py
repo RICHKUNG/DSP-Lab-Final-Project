@@ -4,6 +4,9 @@ GameServer - Flask + SocketIO 遊戲伺服器
 """
 
 import threading
+import json
+import os
+import time
 from pathlib import Path
 from flask import Flask, render_template
 from flask_socketio import SocketIO
@@ -19,6 +22,7 @@ class GameServer:
     - Flask 網頁伺服器
     - SocketIO 即時通訊
     - 訂閱 EventBus 事件，轉發給瀏覽器
+    - 天梯系統 (Leaderboard)
 
     事件對應：
     - ECG_PEAK → emit('spawn_obstacle')
@@ -34,7 +38,9 @@ class GameServer:
         self,
         event_bus: EventBus = None,
         host: str = '0.0.0.0',
-        port: int = 5000
+        port: int = 5000,
+        voice_controller = None,
+        user_name: str = "Player"
     ):
         """
         初始化遊戲伺服器
@@ -43,10 +49,15 @@ class GameServer:
             event_bus: EventBus 實例
             host: 主機位址
             port: 埠號
+            voice_controller: VoiceController 實例（用於校正）
+            user_name: 玩家名稱
         """
         self.event_bus = event_bus or EventBus()
         self.host = host
         self.port = port
+        self.voice_controller = voice_controller
+        self.user_name = user_name
+        self.leaderboard_file = "leaderboard.json"
 
         # 取得模板目錄
         game_dir = Path(__file__).parent
@@ -70,6 +81,25 @@ class GameServer:
         self._setup_routes()
         self._setup_event_handlers()
 
+    def _load_leaderboard(self):
+        """讀取排行榜"""
+        if not os.path.exists(self.leaderboard_file):
+            return []
+        try:
+            with open(self.leaderboard_file, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"[GameServer] Failed to load leaderboard: {e}")
+            return []
+
+    def _save_leaderboard(self, data):
+        """儲存排行榜"""
+        try:
+            with open(self.leaderboard_file, 'w', encoding='utf-8') as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            print(f"[GameServer] Failed to save leaderboard: {e}")
+
     def _setup_routes(self) -> None:
         """設定 Flask 路由"""
 
@@ -90,6 +120,43 @@ class GameServer:
             # 我們啟動一個計時器，3秒後如果沒有新連線就退出
             threading.Timer(3.0, self._check_shutdown).start()
 
+        @self.socketio.on('calibrate_command')
+        def on_calibrate_command(data):
+            """處理校正請求 (非阻塞)"""
+            command = data.get('command', '').upper()
+            print(f"[GameServer] Received calibration request for: {command}")
+
+            if not self.voice_controller:
+                self.socketio.emit('calibration_result', {
+                    'command': command,
+                    'success': False,
+                    'message': 'Voice controller not available'
+                })
+                return
+
+            # 啟動非阻塞校正模式
+            self.voice_controller.start_calibration_mode(command)
+            # 不立即回傳結果，等待 EventBus 事件
+
+        @self.socketio.on('game_over')
+        def on_game_over(data):
+            """處理遊戲結束，更新排行榜"""
+            score = data.get('score', 0)
+            print(f"[GameServer] Game Over! User: {self.user_name}, Score: {score}")
+
+            # 更新排行榜
+            leaderboard = self._load_leaderboard()
+            leaderboard.append({'name': self.user_name, 'score': score, 'date': time.strftime('%Y-%m-%d %H:%M')})
+            
+            # 排序並取前 10 名
+            leaderboard.sort(key=lambda x: x['score'], reverse=True)
+            leaderboard = leaderboard[:10]
+            
+            self._save_leaderboard(leaderboard)
+            
+            # 回傳排行榜
+            self.socketio.emit('leaderboard_update', {'leaderboard': leaderboard})
+
     def _check_shutdown(self):
         """檢查是否還有連線，若無則退出"""
         # 這裡比較難直接取得連線數，但我們可以簡單地用一個全域變數或依賴 SocketIO 內部
@@ -107,12 +174,26 @@ class GameServer:
         self.event_bus.subscribe(EventType.ECG_PEAK, self._on_ecg_peak)
         self.event_bus.subscribe(EventType.ECG_BPM_UPDATE, self._on_bpm_update)
         self.event_bus.subscribe(EventType.VOICE_COMMAND, self._on_voice_command)
+        self.event_bus.subscribe(EventType.CALIBRATION_RESULT, self._on_calibration_result)
         
         # SocketIO 連線事件 (Decorator 寫法在 Class 內比較麻煩，改用明確定義)
         self.socketio.on_event('connect', self._on_client_connect)
         self.socketio.on_event('disconnect', self._on_client_disconnect)
         
         self.client_count = 0
+
+    def _on_calibration_result(self, event: Event) -> None:
+        """處理校正結果事件"""
+        data = event.data
+        print(f"[GameServer] Received Event CALIBRATION_RESULT: {data}")
+        print(f"[GameServer] Emitting 'calibration_result' to frontend...")
+        self.socketio.emit('calibration_result', {
+            'command': data.get('command'),
+            'success': data.get('success'),
+            'message': data.get('message'),
+            'energy': float(data.get('energy', 0))
+        })
+        print(f"[GameServer] Emitted successfully")
 
     def _on_client_connect(self):
         self.client_count += 1

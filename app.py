@@ -51,12 +51,15 @@ def main():
                         help=f'語音辨識方法 (預設: {config.DEFAULT_VOICE_METHOD})')
     parser.add_argument('--web-port', type=int, default=5000,
                         help='網頁伺服器埠號 (預設: 5000)')
+    parser.add_argument('--user', type=str, default='Player',
+                        help='玩家名稱 (預設: Player)')
 
     args = parser.parse_args()
 
     # Banner
     print("=" * 60)
     print("  ECG Pulse Runner - 心電圖跑酷遊戲")
+    print(f"  Player: {args.user}")
     print("  整合語音辨識 + ECG 訊號 + 網頁遊戲")
     print("=" * 60)
     print()
@@ -116,7 +119,12 @@ def main():
 
         # 啟動遊戲伺服器
         print(f"\n[Main] Starting Game Server on port {args.web_port}")
-        game_server = GameServer(event_bus=event_bus, port=args.web_port)
+        game_server = GameServer(
+            event_bus=event_bus, 
+            port=args.web_port, 
+            voice_controller=voice_controller,
+            user_name=args.user
+        )
 
         # 處理 Ctrl+C
         def signal_handler(sig, frame):

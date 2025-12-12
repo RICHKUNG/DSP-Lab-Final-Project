@@ -72,8 +72,11 @@ class VoiceController:
 
         # 狀態
         self._running = False
+        self._is_calibrating = False  # 校正狀態旗標
         self._thread: Optional[threading.Thread] = None
         self._command_queue = queue.Queue()
+        self._calibration_target: Optional[str] = None # 目前校正目標指令
+        self._calibration_start_time: float = 0.0
 
         # 載入模板
         self._load_templates()
@@ -210,6 +213,21 @@ class VoiceController:
 
         print(f"[VoiceController] Collected {num_samples} noise samples")
 
+    def start_calibration_mode(self, command: str) -> None:
+        """進入校正模式：當偵測到指定指令時自動加入模板"""
+        print(f"[VoiceController] Entering calibration mode for: {command}")
+        self._calibration_target = command
+        self._calibration_start_time = time.time()
+        # 清除舊的 VAD 狀態以免混淆
+        if self._vad:
+            self._vad.reset()
+
+    def stop_calibration_mode(self) -> None:
+        """離開校正模式"""
+        if self._calibration_target:
+            print(f"[VoiceController] Stopping calibration mode (was: {self._calibration_target})")
+            self._calibration_target = None
+
     def _recognition_loop(self) -> None:
         """主要辨識迴圈"""
         while self._running:
@@ -226,34 +244,68 @@ class VoiceController:
                     # 辨識
                     start_time = time.time()
 
-                    # Calculate SNR using VAD background estimation
+                    # Calculate SNR
                     sig_rms = np.sqrt(np.mean(segment.astype(np.float32) ** 2))
                     noise_rms = self._vad.background_rms
-                    
+
                     if noise_rms > 0 and sig_rms > noise_rms:
                         snr = 20 * np.log10(sig_rms / noise_rms)
                     else:
                         snr = 0.0
 
+                    # 根據模式選擇方法
                     if self.method == 'mfcc_dtw':
-                        # 僅使用 MFCC
                         result = self._matcher.recognize(segment, mode='best', adaptive=False, methods=['mfcc_dtw'])
                     elif self.method == 'ensemble':
-                        # 固定權重 Ensemble
                         result = self._matcher.recognize(segment, mode='best', adaptive=False)
-                    else:  # adaptive_ensemble
-                        # SNR 自適應 Ensemble
+                    else:
                         result = self._matcher.recognize(segment, mode='best', adaptive=True, known_snr=snr)
 
-                    latency = (time.time() - start_time) * 1000  # ms
-
+                    latency = (time.time() - start_time) * 1000
                     cmd = result['command']
                     conf = result.get('confidence', 0)
+
+                    # 校正邏輯：如果正在校正且指令匹配
+                    if self._calibration_target:
+                        print(f"[VoiceController] In calibration mode. Target={self._calibration_target}, Detected={cmd}")
+                        # 檢查是否超時 (例如 10秒)
+                        if time.time() - self._calibration_start_time > 10.0:
+                            print(f"[VoiceController] Calibration timeout for {self._calibration_target}")
+                            self.event_bus.publish(Event(
+                                EventType.CALIBRATION_RESULT,
+                                {'command': self._calibration_target, 'success': False, 'message': 'Timeout'}
+                            ))
+                            self._calibration_target = None
+
+                        elif cmd == self._calibration_target:
+                            print(f"[VoiceController] ✓✓✓ Calibration MATCH! Adding template for {cmd}")
+                            try:
+                                # 加入一次性模板 (session only)
+                                self._matcher.add_template(cmd, segment, f'live_calib_{int(time.time())}')
+                                print(f"[VoiceController] Template added. Publishing CALIBRATION_RESULT for {cmd}")
+                                
+                                # 發布成功事件
+                                self.event_bus.publish(Event(
+                                    EventType.CALIBRATION_RESULT,
+                                    {'command': cmd, 'success': True, 'message': 'Calibration successful', 'energy': sig_rms}
+                                ))
+                                self._calibration_target = None # 完成後自動退出
+                            except Exception as e:
+                                print(f"[VoiceController] Failed to add calibration template: {e}")
+                                self.event_bus.publish(Event(
+                                    EventType.CALIBRATION_RESULT,
+                                    {'command': self._calibration_target, 'success': False, 'message': str(e)}
+                                ))
+                                self._calibration_target = None
+                        
+                        # 如果是在校正模式，我們*仍然*可以發布 voice_command 讓遊戲繼續反應 (如果使用者希望的話)
+                        # 但使用者說 "校正期間不是忽略口令"，暗示他希望口令被 "保存"。
+                        # 是否要同時觸發遊戲動作？通常校正時介面會擋住遊戲，所以觸發動作也沒關係 (被前端擋住)。
+                        # 但為了讓使用者看到 "我說了START，系統認到了START"，發布事件是好的。
 
                     if cmd not in ('NONE', 'NOISE'):
                         action = self.COMMAND_TO_ACTION.get(cmd, cmd)
 
-                        # 發布事件
                         self.event_bus.publish(Event(
                             EventType.VOICE_COMMAND,
                             {
@@ -265,19 +317,21 @@ class VoiceController:
                                 'snr': snr
                             }
                         ))
-
-                        # 加入輪詢佇列
                         self._command_queue.put(action)
-
                         print(f"[Voice] {cmd} (conf={conf:.2f}, {latency:.1f}ms, SNR={snr:.1f}dB)")
                     else:
-                        # 噪音事件
                         self.event_bus.publish(Event(EventType.VOICE_NOISE, {'snr': snr}))
 
-                    # 重置 VAD
                     self._vad.reset()
 
             except Exception as e:
                 print(f"[VoiceController] Error in recognition loop: {e}")
                 self.event_bus.publish(Event(EventType.VOICE_ERROR, {'error': str(e)}))
                 time.sleep(0.1)
+
+    def calibrate_command(self, command: str, timeout: float = 5.0, on_progress=None) -> dict:
+        """(Deprecated) Legacy blocking calibration. Now just wraps start_calibration_mode."""
+        # 為了相容性保留介面，但實際上應該由 Server 呼叫 start_calibration_mode
+        # 這裡簡單回傳 Error 提示改用非阻塞
+        print("[VoiceController] Warning: Blocking calibrate_command is deprecated.")
+        return {'success': False, 'message': 'Deprecated', 'energy': 0}

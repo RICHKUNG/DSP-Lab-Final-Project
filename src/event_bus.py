@@ -22,6 +22,7 @@ class EventType(Enum):
     VOICE_COMMAND = "voice_command" # 語音指令辨識
     VOICE_NOISE = "voice_noise"     # 偵測到噪音
     VOICE_ERROR = "voice_error"     # 語音錯誤
+    CALIBRATION_RESULT = "calibration_result" # 校正結果
 
     # 遊戲事件
     GAME_START = "game_start"
