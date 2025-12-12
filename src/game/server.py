@@ -40,7 +40,8 @@ class GameServer:
         host: str = '0.0.0.0',
         port: int = 5000,
         voice_controller = None,
-        user_name: str = "Player"
+        user_name: str = "Player",
+        freedom_mode: bool = False
     ):
         """
         初始化遊戲伺服器
@@ -51,13 +52,16 @@ class GameServer:
             port: 埠號
             voice_controller: VoiceController 實例（用於校正）
             user_name: 玩家名稱
+            freedom_mode: 自由模式（使用不同的排行榜檔案）
         """
         self.event_bus = event_bus or EventBus()
         self.host = host
         self.port = port
         self.voice_controller = voice_controller
         self.user_name = user_name
-        self.leaderboard_file = "leaderboard.json"
+        self.freedom_mode = freedom_mode
+        # 根據模式使用不同的排行榜檔案
+        self.leaderboard_file = "leaderboard_freedom.json" if freedom_mode else "leaderboard.json"
 
         # 取得模板目錄
         game_dir = Path(__file__).parent
@@ -110,6 +114,15 @@ class GameServer:
         @self.app.route('/health')
         def health():
             return {'status': 'ok', 'service': 'ECG Pulse Runner'}
+
+        @self.socketio.on('connect')
+        def on_connect():
+            """客戶端連線時發送配置"""
+            print("[GameServer] Client connected")
+            # 發送配置資訊給前端
+            self.socketio.emit('config', {
+                'freedom_mode': self.freedom_mode
+            })
 
         @self.socketio.on('disconnect')
         def on_disconnect():
@@ -175,11 +188,13 @@ class GameServer:
         self.event_bus.subscribe(EventType.ECG_BPM_UPDATE, self._on_bpm_update)
         self.event_bus.subscribe(EventType.VOICE_COMMAND, self._on_voice_command)
         self.event_bus.subscribe(EventType.CALIBRATION_RESULT, self._on_calibration_result)
-        
+        self.event_bus.subscribe(EventType.PLAYBACK_START, self._on_playback_start)
+        self.event_bus.subscribe(EventType.PLAYBACK_COMPLETE, self._on_playback_complete)
+
         # SocketIO 連線事件 (Decorator 寫法在 Class 內比較麻煩，改用明確定義)
         self.socketio.on_event('connect', self._on_client_connect)
         self.socketio.on_event('disconnect', self._on_client_disconnect)
-        
+
         self.client_count = 0
 
     def _on_calibration_result(self, event: Event) -> None:
@@ -194,6 +209,22 @@ class GameServer:
             'energy': float(data.get('energy', 0))
         })
         print(f"[GameServer] Emitted successfully")
+
+    def _on_playback_start(self, event: Event) -> None:
+        """處理播放開始事件（自由模式）"""
+        data = event.data
+        print(f"[GameServer] Playback started for: {data.get('command')}")
+        self.socketio.emit('playback_start', {
+            'command': data.get('command')
+        })
+
+    def _on_playback_complete(self, event: Event) -> None:
+        """處理播放完成事件（自由模式）"""
+        data = event.data
+        print(f"[GameServer] Playback completed for: {data.get('command')}")
+        self.socketio.emit('playback_complete', {
+            'command': data.get('command')
+        })
 
     def _on_client_connect(self):
         self.client_count += 1

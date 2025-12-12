@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh-TW">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -41,7 +41,7 @@
             border-radius: 10px;
             z-index: 1;
         }
-        /* UI ?????????? */
+        /* UI Layer */
         .ui-layer {
             position: absolute;
             top: 18px;
@@ -129,7 +129,7 @@
         .controls-box ul { padding-left: 18px; margin: 0; }
         .controls-box > div { margin-bottom: 18px; }
 
-        /* ?????????????? */
+        /* Status */
         #status {
             position: absolute;
             top: 24px;
@@ -141,7 +141,7 @@
         }
         .connected { color: #0f0 !important; }
 
-        /* ??????? */
+        /* Debug Log */
         #debug-log {
             position: absolute;
             bottom: 26px;
@@ -306,23 +306,23 @@
         </div>
 
         <div class="controls-box collapsed">
-            <h3>🎮 遊戲控制 (CONTROLS)</h3>
+            <h3>🎮 CONTROLS</h3>
             <div style="margin-bottom: 10px;">
-                <strong style="color: #ffff00;">🎤 語音 (Voice):</strong>
+                <strong style="color: #ffff00;">🎤 Voice:</strong>
                 <ul>
-                    <li><strong>"開始" (START)</strong>: 開始遊戲</li>
-                    <li><strong>"跳" (JUMP)</strong>: 跳躍</li>
-                    <li><strong>"翻" (FLIP)</strong>: 翻轉到另一側</li>
-                    <li><strong>"暫停" (PAUSE)</strong>: 暫停/繼續</li>
+                    <li><strong>"START"</strong>: Start Game</li>
+                    <li><strong>"JUMP"</strong>: Jump</li>
+                    <li><strong>"FLIP"</strong>: Flip Side</li>
+                    <li><strong>"PAUSE"</strong>: Pause/Resume</li>
                 </ul>
             </div>
             <div>
-                <strong style="color: #00ffff;">⌨️ 鍵盤 (Keyboard):</strong>
+                <strong style="color: #00ffff;">⌨️ Keyboard:</strong>
                 <ul>
-                    <li><strong>[↑]</strong>: 跳躍</li>
-                    <li><strong>[↓]</strong>: 翻轉到另一側</li>
-                    <li><strong>[Enter]</strong>: 開始</li>
-                    <li><strong>[Space]</strong>: 暫停</li>
+                    <li><strong>[↑]</strong>: Jump</li>
+                    <li><strong>[↓]</strong>: Flip Side</li>
+                    <li><strong>[Enter]</strong>: Start</li>
+                    <li><strong>[Space]</strong>: Pause</li>
                 </ul>
             </div>
         </div>
@@ -332,10 +332,10 @@
 
         <div id="startScreen" class="overlay">
             <h1>ECG PULSE RUNNER</h1>
-            <p>語音控制 + ECG 心電圖</p>
+            <p>Voice Control + ECG Pulse</p>
             <p style="font-size: 14px;">
-                語音指令: 開始 / 跳 / 翻 / 暫停<br>
-                鍵盤: Enter (開始) / ↑ (跳) / ↓ (翻) / Space (暫停)
+                Voice Commands: START / JUMP / FLIP / PAUSE<br>
+                Keyboard: Enter (Start) / ↑ (Jump) / ↓ (Flip) / Space (Pause)
             </p>
             <button onclick="showCalibrationScreen()">START GAME</button>
             <button onclick="startGame()" style="background: #888; margin-top: 10px;">SKIP CALIBRATION</button>
@@ -344,32 +344,32 @@
         <div id="calibrationScreen" class="overlay hidden">
             <h1 style="color:#0ff">VOICE CALIBRATION</h1>
             <p style="font-size: 14px; margin-bottom: 20px;">
-                請依序說出以下指令，系統將錄製您的聲音以提高辨識準確度
+                Please speak the following commands to calibrate voice recognition.
             </p>
             <div id="calibrationStatus" style="text-align: left; margin: 20px 0; font-size: 14px;">
-                <div class="calib-item" id="item-START"><span class="calib-icon">🎤</span> <strong>開始 (START)</strong> <span id="status-START" class="calib-status">等待中...</span></div>
-                <div class="calib-item" id="item-JUMP"><span class="calib-icon">🎤</span> <strong>跳 (JUMP)</strong> <span id="status-JUMP" class="calib-status">等待中...</span></div>
-                <div class="calib-item" id="item-FLIP"><span class="calib-icon">🎤</span> <strong>翻 (FLIP)</strong> <span id="status-FLIP" class="calib-status">等待中...</span></div>
-                <div class="calib-item" id="item-PAUSE"><span class="calib-icon">🎤</span> <strong>暫停 (PAUSE)</strong> <span id="status-PAUSE" class="calib-status">等待中...</span></div>
+                <div class="calib-item" id="item-START"><span class="calib-icon">🎤</span> <strong>START</strong> <span id="status-START" class="calib-status">Waiting...</span></div>
+                <div class="calib-item" id="item-JUMP"><span class="calib-icon">🎤</span> <strong>JUMP</strong> <span id="status-JUMP" class="calib-status">Waiting...</span></div>
+                <div class="calib-item" id="item-FLIP"><span class="calib-icon">🎤</span> <strong>FLIP</strong> <span id="status-FLIP" class="calib-status">Waiting...</span></div>
+                <div class="calib-item" id="item-PAUSE"><span class="calib-icon">🎤</span> <strong>PAUSE</strong> <span id="status-PAUSE" class="calib-status">Waiting...</span></div>
             </div>
             <p id="calibrationPrompt" style="font-size: 18px; color: #0f0; margin: 20px 0; font-weight: bold;">
-                請說：開始
+                Please say: START
             </p>
             <button onclick="skipCalibration()" style="background: #666; margin-top: 15px;">SKIP</button>
         </div>
 
         <div id="gameOverScreen" class="overlay hidden">
             <h1 style="color:#f33">GAME OVER</h1>
-            <p>距離: <span id="finalDist"></span>m</p>
+            <p>Distance: <span id="finalDist"></span>m</p>
             
             <div class="leaderboard-container">
-                <h3 style="color: #0f0; margin: 0 0 10px 0; text-align: center;">🏆 天梯榜 (Top 10)</h3>
+                <h3 style="color: #0f0; margin: 0 0 10px 0; text-align: center;">🏆 Leaderboard (Top 10)</h3>
                 <table class="leaderboard-table">
                     <thead>
                         <tr>
                             <th width="15%">#</th>
-                            <th width="50%">玩家</th>
-                            <th width="35%">距離</th>
+                            <th width="50%">Player</th>
+                            <th width="35%">Distance</th>
                         </tr>
                     </thead>
                     <tbody id="leaderboardBody">
@@ -407,7 +407,7 @@
             console.log(msg);
         }
 
-        // Socket.IO 連線
+        // Socket.IO Connection
         const socket = io();
         const statusEl = document.getElementById('status');
 
@@ -427,7 +427,18 @@
             log(`Connection Error: ${error}`);
         });
 
-        // 遊戲狀態
+        // Config and Mode
+        let freedomMode = false;
+
+        socket.on('config', (data) => {
+            freedomMode = data.freedom_mode || false;
+            log(`Received config: freedom_mode=${freedomMode}`);
+            if (freedomMode) {
+                log('Freedom Mode ENABLED - use custom voice commands');
+            }
+        });
+
+        // Game State
         const canvas = document.getElementById('gameCanvas');
         const ctx = canvas.getContext('2d');
         let width, height, centerY;
@@ -437,7 +448,7 @@
         let gameSpeed = 8; // Accelerated from 6
         let obstacles = [];
 
-        // 玩家
+        // Player
         const player = {
             x: 100,
             y: 0,
@@ -456,7 +467,7 @@
                 this.dy += 1.0 * gravityDir;
                 this.y += this.dy;
 
-                // 落地
+                // Grounding
                 if (this.isOnTop) {
                     if (this.y > groundY) {
                         this.y = groundY;
@@ -533,11 +544,11 @@
             }
         };
 
-        // 障礙物
+        // Obstacle
         class Obstacle {
             constructor(dir, height) {
                 this.x = width;
-                this.dir = dir; // 1 (下) 或 -1 (上)
+                this.dir = dir; // 1 (down) or -1 (up)
                 this.height = Math.min(Math.max(height, 20), 80);
                 this.width = 15; // Adjusted for thinner obstacles, lowering difficulty
                 this.markedForDeletion = false;
@@ -558,7 +569,7 @@
                 ctx.shadowColor = `rgba(0, 255, 0, ${pulseGlow})`;
 
                 if (this.dir === 1) {
-                    // 下方障礙 - ECG spike going down
+                    // Lower obstacle - ECG spike going down
                     const baseY = centerY;
 
                     // Gradient for depth
@@ -582,7 +593,7 @@
                     ctx.lineWidth = 1.5;
                     ctx.stroke();
                 } else {
-                    // 上方障礙 - ECG spike going up
+                    // Upper obstacle - ECG spike going up
                     const baseY = centerY;
 
                     // Gradient for depth
@@ -634,7 +645,7 @@
             }
         }
 
-        // 接收事件
+        // Receive Events
         socket.on('spawn_obstacle', (data) => {
             if (!isRunning || isPaused || isCalibrating) return;
             // log(`Spawn obstacle: ${data.dir}`);
@@ -644,7 +655,7 @@
         socket.on('player_action', (data) => {
             const action = (data.action || '').toUpperCase().trim();
 
-            // 校正模式下處理
+            // Calibration Mode Handling
             if (isCalibrating) {
                 const currentTarget = calibrationCommands[calibrationIndex];
                 if (action === currentTarget) {
@@ -660,7 +671,7 @@
 
             log(`Action received: ${data.action}`);
 
-            // 優先處理 START
+            // Prioritize START
             if (action === 'START') {
                 if (!isRunning) {
                     startGame();
@@ -705,10 +716,17 @@
         let isCalibrating = false;
 
         const commandPrompts = {
-            'START': '開始',
-            'JUMP': '跳',
-            'FLIP': '翻',
-            'PAUSE': '暫停'
+            'START': 'START',
+            'JUMP': 'JUMP',
+            'FLIP': 'FLIP',
+            'PAUSE': 'PAUSE'
+        };
+
+        const commandActionPrompts = {
+            'START': 'Say any word to START the game',
+            'PAUSE': 'Say any word to PAUSE',
+            'JUMP': 'Say any word to JUMP',
+            'FLIP': 'Say any word to FLIP'
         };
 
         function showCalibrationScreen() {
@@ -729,7 +747,7 @@
                 }
                 const statusEl = document.getElementById(`status-${cmd}`);
                 if (statusEl) {
-                    statusEl.textContent = '等待中...';
+                    statusEl.textContent = 'Waiting...';
                     statusEl.className = 'calib-status';
                 } else {
                     log(`ERROR: Cannot find status-${cmd}`);
@@ -761,8 +779,8 @@
             }
 
             const command = calibrationCommands[calibrationIndex];
-            const prompt = commandPrompts[command];
-            log(`Current command: ${command}, prompt: ${prompt}`);
+            const prompt = freedomMode ? commandActionPrompts[command] : commandPrompts[command];
+            log(`Current command: ${command}, prompt: ${prompt}, freedomMode: ${freedomMode}`);
 
             // Highlight current command item
             calibrationCommands.forEach((cmd, idx) => {
@@ -786,10 +804,14 @@
                 }
             });
 
-            // Update UI
-            document.getElementById('calibrationPrompt').textContent = `請說：${prompt}`;
+            // Update UI - different format for freedom mode
+            if (freedomMode) {
+                document.getElementById('calibrationPrompt').textContent = prompt;
+            } else {
+                document.getElementById('calibrationPrompt').textContent = `Please say: ${prompt}`;
+            }
             const statusEl = document.getElementById(`status-${command}`);
-            statusEl.textContent = '🎤 錄音中...';
+            statusEl.textContent = '🎤 Recording...';
             statusEl.className = 'calib-status recording';
 
             log(`Calibrating: ${command}...`);
@@ -812,7 +834,7 @@
             const statusEl = document.getElementById(`status-${command}`);
 
             if (success) {
-                statusEl.textContent = '✓ 完成';
+                statusEl.textContent = '✓ Done';
                 statusEl.className = 'calib-status success';
                 log(`${command}: Success`);
 
@@ -833,9 +855,23 @@
             }
         });
 
-        // 鍵盤控制
+        socket.on('playback_start', (data) => {
+            log(`[DEBUG] Playback started for: ${data.command}`);
+            const statusEl = document.getElementById(`status-${data.command}`);
+            if (statusEl) {
+                statusEl.textContent = '🔊 Playing back your command...';
+                statusEl.className = 'calib-status recording';
+            }
+        });
+
+        socket.on('playback_complete', (data) => {
+            log(`[DEBUG] Playback completed for: ${data.command}`);
+            // Status will be updated by calibration_result event
+        });
+
+        // Keyboard Controls
         document.addEventListener('keydown', (e) => {
-            // 校正模式下忽略鍵盤遊戲控制
+            // Ignore game controls during calibration
             if (isCalibrating) return;
 
             if (e.key === 'ArrowUp') {
@@ -857,7 +893,7 @@
             }
         });
 
-        // 初始化
+        // Init
         function resize() {
             width = canvas.width = canvas.offsetWidth;
             height = canvas.height = canvas.offsetHeight;
@@ -877,7 +913,7 @@
             player.y = centerY - player.size;
             player.dy = 0;
             player.jumpCount = 0;
-            player.isOnTop = true; // 重置位置
+            player.isOnTop = true; // Reset position
 
             gameLoop();
         }
@@ -917,11 +953,11 @@
         function gameLoop() {
             if (!isRunning) return;
 
-            // 清空
+            // Clear
             ctx.fillStyle = '#000';
             ctx.fillRect(0, 0, width, height);
 
-            // 中線
+            // Center line
             ctx.strokeStyle = '#0f0';
             ctx.lineWidth = 2;
             ctx.beginPath();
@@ -930,12 +966,12 @@
             ctx.stroke();
 
             if (!isPaused) {
-                // 更新
+                // Update
                 player.update();
                 obstacles.forEach(o => o.update());
                 obstacles = obstacles.filter(o => !o.markedForDeletion);
 
-                // 碰撞檢測
+                // Collision Detection
                 for (let obs of obstacles) {
                     if (obs.collidesWith(player)) {
                         gameOver();
@@ -950,7 +986,7 @@
                 ctx.fillText("PAUSED", width/2 - 50, height/2 - 40);
             }
 
-            // 繪製
+            // Draw
             player.draw();
             obstacles.forEach(o => o.draw());
 

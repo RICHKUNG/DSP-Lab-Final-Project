@@ -1,6 +1,6 @@
 """
-ECG Pulse Runner - 主程式入口
-整合 ECG、語音、遊戲模組
+ECG Pulse Runner - Main Entry Point
+Integrates ECG, Voice, and Game modules
 """
 
 import argparse
@@ -16,66 +16,69 @@ from src import config
 
 
 def main():
-    """主程式"""
+    """Main Program"""
     parser = argparse.ArgumentParser(
-        description='ECG Pulse Runner - 心電圖跑酷遊戲',
+        description='ECG Pulse Runner - ECG Parkour Game',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-範例：
-  python app.py                    # 啟動完整系統
-  python app.py --no-ecg           # 不使用 ECG (測試模式)
-  python app.py --no-voice         # 不使用語音 (測試模式)
-  python app.py --ecg-port COM3    # 指定 ECG Port
-  python app.py --voice-method mfcc_dtw  # 指定語音辨識方法
-  python app.py --web-port 8080    # 指定網頁埠號
+Examples:
+  python app.py                    # Start full system
+  python app.py --no-ecg           # No ECG (Test mode)
+  python app.py --no-voice         # No Voice (Test mode)
+  python app.py --ecg-port COM3    # Specify ECG Port
+  python app.py --voice-method mfcc_dtw  # Specify voice recognition method
+  python app.py --web-port 8080    # Specify web port
+  python app.py --freedom          # Freedom mode - use custom voice commands
         """
     )
 
     parser.add_argument('--ecg-port', type=str, default=None,
-                        help='ECG Serial Port (預設: 自動偵測)')
+                        help='ECG Serial Port (Default: Auto-detect)')
     parser.add_argument('--no-ecg', action='store_true',
-                        help='停用 ECG 模組')
+                        help='Disable ECG module')
     parser.add_argument('--bpm-threshold', type=float, default=-10.0,
-                        help='BPM 低於此值時切換到假訊號 (預設: -10，幾乎不觸發)')
+                        help='Switch to fake signal if BPM below this (Default: -10, rarely triggers)')
     parser.add_argument('--bpm-recovery', type=float, default=50.0,
-                        help='BPM 高於此值時恢復真實訊號 (預設: 50)')
+                        help='Resume real signal if BPM above this (Default: 50)')
     parser.add_argument('--fallback-bpm', type=float, default=75.0,
-                        help='假訊號的 BPM (預設: 75)')
+                        help='Fake signal BPM (Default: 75)')
     parser.add_argument('--retry-interval', type=float, default=10.0,
-                        help='Fallback 模式下重試真實 ECG 的間隔秒數 (預設: 10)')
+                        help='Retry interval for real ECG in fallback mode (Default: 10)')
     parser.add_argument('--no-voice', action='store_true',
-                        help='停用語音模組')
+                        help='Disable Voice module')
     parser.add_argument('--voice-method', type=str,
                         default=config.DEFAULT_VOICE_METHOD,
                         choices=['mfcc_dtw', 'ensemble', 'adaptive_ensemble'],
-                        help=f'語音辨識方法 (預設: {config.DEFAULT_VOICE_METHOD})')
+                        help=f'Voice recognition method (Default: {config.DEFAULT_VOICE_METHOD})')
     parser.add_argument('--web-port', type=int, default=5000,
-                        help='網頁伺服器埠號 (預設: 5000)')
+                        help='Web server port (Default: 5000)')
     parser.add_argument('--user', type=str, default='Player',
-                        help='玩家名稱 (預設: Player)')
+                        help='Player name (Default: Player)')
+    parser.add_argument('--freedom', action='store_true',
+                        help='Freedom Mode: Use custom commands during calibration')
 
     args = parser.parse_args()
 
     # Banner
     print("=" * 60)
-    print("  ECG Pulse Runner - 心電圖跑酷遊戲")
+    print("  ECG Pulse Runner - ECG Parkour Game")
     print(f"  Player: {args.user}")
-    print("  整合語音辨識 + ECG 訊號 + 網頁遊戲")
+    print("  Integrated Voice + ECG + Web Game")
     print("=" * 60)
     print()
 
-    # 初始化 EventBus
+    # Initialize EventBus
     event_bus = EventBus()
     event_bus.start()
     print("[Main] EventBus started")
 
-    # 模組實例
+    # Module Instances
     ecg_manager = None
     voice_controller = None
     game_server = None
 
     try:
-        # 啟動 ECG 模組
+        # Start ECG Module
         if not args.no_ecg:
             print(f"\n[Main] Initializing ECG module (port={args.ecg_port or 'auto'})")
             print(f"[Main]   BPM threshold: {args.bpm_threshold} (switch to fallback)")
@@ -100,12 +103,15 @@ def main():
         else:
             print("\n[Main] ECG module disabled (--no-ecg)")
 
-        # 啟動語音模組
+        # Start Voice Module
         if not args.no_voice:
             print(f"\n[Main] Initializing Voice module (method={args.voice_method})")
+            if args.freedom:
+                print(f"[Main]   Freedom Mode ENABLED - custom voice commands")
             voice_controller = VoiceController(
                 event_bus=event_bus,
-                method=args.voice_method
+                method=args.voice_method,
+                freedom_mode=args.freedom
             )
             try:
                 voice_controller.start()
@@ -117,16 +123,17 @@ def main():
         else:
             print("\n[Main] Voice module disabled (--no-voice)")
 
-        # 啟動遊戲伺服器
+        # Start Game Server
         print(f"\n[Main] Starting Game Server on port {args.web_port}")
         game_server = GameServer(
-            event_bus=event_bus, 
-            port=args.web_port, 
+            event_bus=event_bus,
+            port=args.web_port,
             voice_controller=voice_controller,
-            user_name=args.user
+            user_name=args.user,
+            freedom_mode=args.freedom
         )
 
-        # 處理 Ctrl+C
+        # Handle Ctrl+C
         def signal_handler(sig, frame):
             print("\n\n[Main] Shutting down...")
             event_bus.stop()
@@ -139,7 +146,7 @@ def main():
 
         signal.signal(signal.SIGINT, signal_handler)
 
-        # 啟動伺服器（阻塞）
+        # Start Server (Blocking)
         print("\n" + "=" * 60)
         print("  System Ready!")
         print(f"  Open browser: http://localhost:{args.web_port}")
@@ -155,7 +162,7 @@ def main():
         import traceback
         traceback.print_exc()
     finally:
-        # 清理
+        # Cleanup
         event_bus.stop()
         if ecg_manager:
             ecg_manager.stop()

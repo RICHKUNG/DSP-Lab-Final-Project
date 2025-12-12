@@ -23,6 +23,8 @@ class EventType(Enum):
     VOICE_NOISE = "voice_noise"     # 偵測到噪音
     VOICE_ERROR = "voice_error"     # 語音錯誤
     CALIBRATION_RESULT = "calibration_result" # 校正結果
+    PLAYBACK_START = "playback_start"         # 播放開始（自由模式）
+    PLAYBACK_COMPLETE = "playback_complete"   # 播放完成（自由模式）
 
     # 遊戲事件
     GAME_START = "game_start"

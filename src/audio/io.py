@@ -390,6 +390,34 @@ def save_audio_file(filepath: str, audio: np.ndarray):
     sf.write(filepath, audio, config.SAMPLE_RATE)
 
 
+def playback_audio(audio: np.ndarray, sample_rate: int = None) -> None:
+    """
+    播放音訊（用於校正時確認錄製內容）
+
+    Args:
+        audio: 音訊樣本 (int16 or float32)
+        sample_rate: 取樣率 (預設使用 config.SAMPLE_RATE)
+    """
+    if sample_rate is None:
+        sample_rate = config.SAMPLE_RATE
+
+    # 轉換為 float32 (sounddevice 需要)
+    if audio.dtype == np.int16:
+        audio_float = audio.astype(np.float32) / 32767.0
+    else:
+        audio_float = audio.astype(np.float32)
+
+    try:
+        import sounddevice as sd
+        print(f"[Audio] Playing back {len(audio)} samples at {sample_rate}Hz...")
+        sd.play(audio_float, samplerate=sample_rate)
+        sd.wait()  # 阻塞直到播放完成
+        print(f"[Audio] Playback complete")
+    except Exception as e:
+        print(f"[Audio] Playback failed: {e}")
+        raise
+
+
 # =============================================================================
 # Template Loading Utilities
 # =============================================================================

@@ -48,7 +48,8 @@ class VoiceController:
         self,
         template_dir: Optional[str] = None,
         event_bus: Optional[EventBus] = None,
-        method: str = 'adaptive_ensemble'
+        method: str = 'adaptive_ensemble',
+        freedom_mode: bool = False
     ):
         """
         初始化語音控制器
@@ -60,10 +61,12 @@ class VoiceController:
                 - 'mfcc_dtw': 僅 MFCC (最快 ~160ms)
                 - 'ensemble': 固定權重 Ensemble
                 - 'adaptive_ensemble': SNR 自適應 (預設，最準 97.9%)
+            freedom_mode: 自由模式，不載入預設模板，僅使用校正時的自訂口令
         """
         self.event_bus = event_bus or EventBus()
         self.template_dir = template_dir or str(Path(__file__).parent.parent.parent / "cmd_templates")
         self.method = method
+        self.freedom_mode = freedom_mode
 
         # 組件
         self._audio_stream: Optional[AudioStream] = None
@@ -78,8 +81,11 @@ class VoiceController:
         self._calibration_target: Optional[str] = None # 目前校正目標指令
         self._calibration_start_time: float = 0.0
 
-        # 載入模板
-        self._load_templates()
+        # 載入模板（自由模式下跳過）
+        if not freedom_mode:
+            self._load_templates()
+        else:
+            print("[VoiceController] Freedom mode - skipping template loading")
 
     def _load_templates(self) -> None:
         """載入語音模板"""
@@ -228,6 +234,54 @@ class VoiceController:
             print(f"[VoiceController] Stopping calibration mode (was: {self._calibration_target})")
             self._calibration_target = None
 
+    def _validate_audio(self, audio: np.ndarray) -> bool:
+        """
+        驗證錄製的音訊是否適合作為模板
+
+        Returns:
+            True if valid, False otherwise
+        """
+        # 檢查非空
+        if len(audio) == 0:
+            print("[VoiceController] Validation failed: empty audio")
+            return False
+
+        # 檢查最小長度 (100ms = 1600 samples at 16kHz)
+        min_samples = int(config.SAMPLE_RATE * 0.1)
+        if len(audio) < min_samples:
+            print(f"[VoiceController] Validation failed: too short ({len(audio)} < {min_samples} samples)")
+            return False
+
+        # 檢查能量 (RMS 必須高於背景噪音 1.5 倍)
+        rms = np.sqrt(np.mean(audio.astype(np.float32) ** 2))
+        if self._vad:
+            threshold = self._vad.background_rms * 1.5
+            if rms < threshold:
+                print(f"[VoiceController] Validation failed: too quiet (RMS={rms:.1f} < {threshold:.1f})")
+                return False
+
+        print(f"[VoiceController] Audio validation passed (length={len(audio)}, RMS={rms:.1f})")
+        return True
+
+    def _clear_command_templates(self, command: str) -> None:
+        """清除指定指令的所有模板（自由模式用）"""
+        print(f"[VoiceController] Clearing all templates for command: {command}")
+        for method_name, matcher in self._matcher.matchers.items():
+            if command in matcher.templates:
+                matcher.templates[command] = []
+                matcher.template_names[command] = []
+                print(f"[VoiceController]   Cleared {method_name} templates for {command}")
+
+    def _playback_audio(self, audio: np.ndarray) -> None:
+        """播放音訊以確認錄製結果"""
+        try:
+            from .io import playback_audio
+            print("[VoiceController] Playing back captured audio...")
+            playback_audio(audio)
+            print("[VoiceController] Playback complete")
+        except Exception as e:
+            print(f"[VoiceController] Playback error (non-critical): {e}")
+
     def _recognition_loop(self) -> None:
         """主要辨識迴圈"""
         while self._running:
@@ -267,7 +321,6 @@ class VoiceController:
 
                     # 校正邏輯：如果正在校正且指令匹配
                     if self._calibration_target:
-                        print(f"[VoiceController] In calibration mode. Target={self._calibration_target}, Detected={cmd}")
                         # 檢查是否超時 (例如 10秒)
                         if time.time() - self._calibration_start_time > 10.0:
                             print(f"[VoiceController] Calibration timeout for {self._calibration_target}")
@@ -277,13 +330,81 @@ class VoiceController:
                             ))
                             self._calibration_target = None
 
+                        # 自由模式：直接使用錄製的音訊，不需辨識
+                        elif self.freedom_mode:
+                            print(f"[VoiceController] Freedom mode: Capturing custom command for {self._calibration_target}")
+
+                            # 驗證音訊品質
+                            if self._validate_audio(segment):
+                                print(f"[VoiceController] ✓ Valid audio captured for {self._calibration_target}")
+
+                                try:
+                                    # 清除該指令的所有現有模板
+                                    self._clear_command_templates(self._calibration_target)
+
+                                    # 加入新模板（這是唯一的模板）
+                                    self._matcher.add_template(
+                                        self._calibration_target,
+                                        segment,
+                                        f'freedom_{self._calibration_target}_{int(time.time())}'
+                                    )
+                                    print(f"[VoiceController] Custom template added for {self._calibration_target}")
+
+                                    # 發布播放開始事件
+                                    self.event_bus.publish(Event(
+                                        EventType.PLAYBACK_START,
+                                        {'command': self._calibration_target}
+                                    ))
+
+                                    # 播放確認
+                                    self._playback_audio(segment)
+
+                                    # 發布播放完成事件
+                                    self.event_bus.publish(Event(
+                                        EventType.PLAYBACK_COMPLETE,
+                                        {'command': self._calibration_target}
+                                    ))
+
+                                    # 發布校正成功事件
+                                    self.event_bus.publish(Event(
+                                        EventType.CALIBRATION_RESULT,
+                                        {
+                                            'command': self._calibration_target,
+                                            'success': True,
+                                            'message': 'Custom command recorded',
+                                            'energy': sig_rms
+                                        }
+                                    ))
+                                    self._calibration_target = None  # 完成後移到下一個指令
+
+                                except Exception as e:
+                                    print(f"[VoiceController] Failed to add custom template: {e}")
+                                    self.event_bus.publish(Event(
+                                        EventType.CALIBRATION_RESULT,
+                                        {'command': self._calibration_target, 'success': False, 'message': str(e)}
+                                    ))
+                                    # 不清除 _calibration_target，允許重試
+                            else:
+                                # 驗證失敗，發布失敗事件但不清除 target（自動重試）
+                                print(f"[VoiceController] Invalid audio, waiting for retry...")
+                                self.event_bus.publish(Event(
+                                    EventType.CALIBRATION_RESULT,
+                                    {
+                                        'command': self._calibration_target,
+                                        'success': False,
+                                        'message': 'Audio too quiet or too short, please try again'
+                                    }
+                                ))
+                                # 不清除 _calibration_target，停留在同一指令等待重試
+
+                        # 一般模式：需要辨識匹配
                         elif cmd == self._calibration_target:
                             print(f"[VoiceController] ✓✓✓ Calibration MATCH! Adding template for {cmd}")
                             try:
                                 # 加入一次性模板 (session only)
                                 self._matcher.add_template(cmd, segment, f'live_calib_{int(time.time())}')
                                 print(f"[VoiceController] Template added. Publishing CALIBRATION_RESULT for {cmd}")
-                                
+
                                 # 發布成功事件
                                 self.event_bus.publish(Event(
                                     EventType.CALIBRATION_RESULT,
